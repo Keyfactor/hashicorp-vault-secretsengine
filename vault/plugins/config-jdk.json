@@ -1,0 +1,8 @@
+{
+	"host":"192.168.0.24",
+	"creds":"SkRLXGpraWxnYWxsOlBAc3N3MHJk",
+	"appkey":"AAAAAAAAAAAAAA==",
+	"template":"UserServer",
+	"protocol":"http",
+	"CA":"CN=jdk-CA1,DC=jdk,DC=cms"
+}
