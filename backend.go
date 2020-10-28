@@ -27,7 +27,7 @@ import (
 
 //var myClient *http.Client
 var config map[string]string
-var roles map[string][]string
+var roles map[string]map[string]bool
 
 // Factory configures and returns backend
 func Factory(ctx context.Context, conf *logical.BackendConfig) (logical.Backend, error) {
@@ -35,7 +35,7 @@ func Factory(ctx context.Context, conf *logical.BackendConfig) (logical.Backend,
 	//	file, _ := ioutil.ReadFile("/root/vault/config/config-mar.json")
 	file, _ := ioutil.ReadFile(confPath)
 	config = make(map[string]string)
-	roles = make(map[string][]string)
+	roles = make(map[string]map[string]bool)
 	jsonutil.DecodeJSON(file, &config)
 
 	b := &backend{
@@ -178,7 +178,7 @@ func (b *backend) handleRead(ctx context.Context, req *logical.Request, data *fr
 	return resp, nil
 }
 
-func (b *backend) getCSR(host string, time string, template string, ca string, cn string, appkey string, creds string) ([]byte, []byte) {
+func (b *backend) submitCSR(host string, time string, template string, ca string, cn string, appkey string, creds string) ([]byte, []byte) {
 
 	keyBytes, _ := rsa.GenerateKey(rand.Reader, 2048)
 
@@ -220,6 +220,11 @@ func (b *backend) getCSR(host string, time string, template string, ca string, c
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
 		b.Logger().Info("Enrollment failed: {{err}}", err)
+		return nil, nil
+	}
+	if res.StatusCode != 200 {
+		b.Logger().Info("Enrollment failed: server returned " + string(res.StatusCode))
+		return nil, nil
 	}
 
 	defer res.Body.Close()
@@ -232,7 +237,7 @@ func (b *backend) getCSR(host string, time string, template string, ca string, c
 	return body, x509.MarshalPKCS1PrivateKey(keyBytes)
 }
 
-func (b *backend) requestCSR(req *logical.Request, data *framework.FieldData, domains []string) (*logical.Response, error) {
+func (b *backend) requestCert(req *logical.Request, data *framework.FieldData, role string) (*logical.Response, error) {
 	location, _ := time.LoadLocation("UTC")
 	t := time.Now().In(location)
 	timestamp := t.Format("2006-01-02T15:04:05")
@@ -240,20 +245,23 @@ func (b *backend) requestCSR(req *logical.Request, data *framework.FieldData, do
 	arg, _ := json.Marshal(req.Data)
 	b.Logger().Info(string(arg))
 	cn := ""
+	// Check to make sure that kv pairs provided
+	if len(req.Data) == 0 {
+		return nil, fmt.Errorf("data must be provided to store in secret")
+	}
 	for k, v := range req.Data {
 		if k == "common_name" {
 			cn = v.(string)
 		}
 	}
-	if !strings.HasSuffix(cn, domains[0]) {
-		return nil, fmt.Errorf("Role does not allow cn " + cn)
+	if !b.checkDomainAgainstRole(role, cn) {
+		return nil, fmt.Errorf("Common name not allowed for provided role")
 	}
-	b.Logger().Debug("Connecting to " + config["host"] + "for common name " + cn)
-	result, key := b.getCSR(config["host"], timestamp, config["template"], config["CA"], cn, config["appkey"], config["creds"])
 
-	// Check to make sure that kv pairs provided
-	if len(req.Data) == 0 {
-		return nil, fmt.Errorf("data must be provided to store in secret")
+	b.Logger().Debug("Connecting to " + config["host"] + "for common name " + cn)
+	result, key := b.submitCSR(config["host"], timestamp, config["template"], config["CA"], cn, config["appkey"], config["creds"])
+	if result == nil || key == nil {
+		return nil, fmt.Errorf("Could not enroll certificate")
 	}
 
 	var r map[string]interface{}
@@ -284,12 +292,23 @@ func (b *backend) requestCSR(req *logical.Request, data *framework.FieldData, do
 	return response, nil
 }
 
-func (b *backend) checkRole(role string) bool {
+func (b *backend) checkRoleExists(role string) bool {
 	b.Logger().Trace("Checking role " + role + " against " + strconv.FormatInt(int64(len(roles)), 10) + " roles")
-	jsonutil.DecodeJSON(b.store["roles"], &roles)
 	for k, _ := range roles {
-		b.Logger().Trace("Checking against role " + k)
+		b.Logger().Info("Checking against role " + k)
 		if k == role {
+			return true
+		}
+	}
+	return false
+}
+
+func (b *backend) checkDomainAgainstRole(role string, domain string) bool {
+	for k, v := range roles[role] {
+		if v && strings.HasSuffix(domain, k){
+			return true
+		}
+		if !v && k == domain {
 			return true
 		}
 	}
@@ -304,29 +323,35 @@ func (b *backend) save(ctx context.Context, req *logical.Request) {
 
 func (b *backend) handleWrite(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 	// Break up path
-	// If issue, look up role then go to CSR
 	path := strings.Split(data.Get("path").(string), "/")
+	b.Logger().Info(path[0])
+	b.Logger().Info(path[1])
+	// If issue, look up role then go to CSR
 	if len(path) == 2 && path[0] == "issue" {
-		if b.checkRole(path[1]) {
-			return b.requestCSR(req, data, roles[path[1]])
+		if !b.checkRoleExists(path[1]) {
+			return nil, fmt.Errorf("Cannot find provided role")
 		}
-//		b.save(ctx, req)
-		return nil, fmt.Errorf("Cannot find provided role")
+		return b.requestCert(req, data, path[1])
 	}
 	// If roles, add role
 	if len(path) == 2 && path[0] == "roles" {
 		b.Logger().Trace("Adding role " + path[1])
 		var domains []string
+		allowSubdomains := false
 		for k, v := range req.Data {
 			if k == "allowed_domains" {
 				domains = strings.Split(v.(string),",")
 			}
+			if k == "allow_subdomains" {
+				allowSubdomains, _ = strconv.ParseBool(v.(string))
+			}
 		}
-	        jsonutil.DecodeJSON(b.store["roles"], &roles)
-		roles[path[1]] = domains
-		buf, _ := json.Marshal(roles)
-		b.store["roles"] = []byte(buf)
-//		b.save(ctx, req)
+		roles[path[1]] = make(map[string]bool)
+		for i := range domains{
+			roles[path[1]][domains[i]] = allowSubdomains
+		}
+		roleString, _ := jsonutil.EncodeJSON(roles)
+		b.Logger().Info("roles: " + string(roleString))
 		return nil, nil
 	}
 	return nil, fmt.Errorf("Invalid path")
