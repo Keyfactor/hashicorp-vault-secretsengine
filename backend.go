@@ -27,6 +27,7 @@ import (
 
 var config map[string]string
 var roles map[string]map[string]bool
+var issuer string
 
 // Factory configures and returns backend
 func Factory(ctx context.Context, conf *logical.BackendConfig) (logical.Backend, error) {
@@ -89,10 +90,6 @@ func (b *backend) paths() []*framework.Path {
 				logical.ListOperation: &framework.PathOperation{
 					Callback: b.handleList,
 				},
-				logical.DeleteOperation: &framework.PathOperation{
-					Callback: b.handleDelete,
-					Summary:  "Deletes the secret at the specified location.",
-				},
 			},
 
 			ExistenceCheck: b.handleExistenceCheck,
@@ -117,7 +114,7 @@ func (b *backend) handleList(ctx context.Context, req *logical.Request, data *fr
 			continue
 		}
 
-		list = append(list, strings.Split(k,"/")[1])
+		list = append(list, k)
 	}
 	resp := &logical.Response{
 		Data: map[string]interface{} {
@@ -134,18 +131,21 @@ func (b *backend) handleRead(ctx context.Context, req *logical.Request, data *fr
 	path := data.Get("path").(string)
 	path = strings.ReplaceAll(path, "-","")
 	path = strings.ReplaceAll(path, ":","")
-	path = strings.ReplaceAll(path, "/cert/","")
+	path = strings.ReplaceAll(path, "cert/","")
 	b.Logger().Debug("requested " + path)
+	if path == "ca" {
+		return b.getCACert()
+	}
 
 	// Lookup and decode certificate stored by given serial number
 	certBytes := b.store[path]
-	var certString string
-	jsonutil.DecodeJSON(certBytes,&certString)
+	certString := string(certBytes)
 
 	// Conform response to Vault PKI API
 	resp := &logical.Response{
 		Data: map[string]interface{}{
 			"certificate":certString,
+			"revocation_time":0,
 		},
 	}
 
@@ -247,25 +247,73 @@ func (b *backend) requestCert(req *logical.Request, data *framework.FieldData, r
 	certs := make([]string, len(certI))
 	for i, v := range certI {
 		certs[i] = v.(string)
+		start := strings.Index(certs[i],"-----BEGIN CERTIFICATE-----")
+		certs[i] = certs[i][start:]
 	}
 	serial := inner["SerialNumber"].(string)
 	b.Logger().Debug("Cert content: " + certs[0])
 	b.Logger().Debug("Serial number: " + serial)
-	buf := []byte(`{"` + serial + `":"` + certs[0] + `"}`)
-	encoded, _ := jsonutil.EncodeJSON(buf)
-	b.store[serial] = encoded
+	b.store[serial] = []byte(certs[0])
+
+	// Retain the issuer cert for calls to "vault read keyfactor/cert/ca"
+	issuer = certs[1]
 
 	// Conform response to Vault PKI API
 	response := &logical.Response{
 		Data: map[string]interface{}{
-			"certificate":      "-----BEGIN CERTIFICATE-----\n" + certs[0] + "\n-----END CERTIFICATE-----",
-			"issuing_ca":       "-----BEGIN CERTIFICATE-----\n" + certs[1] + "\n-----END CERTIFICATE-----",
+			"certificate":      certs[0],
+			"issuing_ca":       certs[1],
 			"private_key":      "-----BEGIN RSA PRIVATE KEY-----\n" + base64.StdEncoding.EncodeToString(key) + "\n-----END RSA PRIVATE KEY-----",
 			"private_key_type": "rsa",
+			"revocation_time":0,
 			"serial_number":    serial,
 		},
 	}
 
+	return response, nil
+}
+
+func (b* backend) getCACert() (*logical.Response, error) {
+//	query := `(CertState -eq "6" OR CertState -eq "7") AND CA -eq "` + config["CA"] + `"`
+/*        url := config["protocol"] + "://" + host + "/KeyfactorAPI/Certificates/Query"
+        b.Logger().Debug("url: " + url)
+        bodyContent := "{\"CSR\": \"" + csrBuf.String() + "\",\"CertificateAuthority\":\"" + ca + "\",\"IncludeChain\": true, \"Metadata\": {}, \"Timestamp\": \"" + time + "\",\"Template\": \"" + template + "\",\"SANs\": {}}"
+        payload := strings.NewReader(bodyContent)
+        b.Logger().Debug("body: " + bodyContent)
+        req, err := http.NewRequest("POST", url, payload)
+        if err != nil {
+                b.Logger().Info("Error forming request: {{err}}", err)
+        }
+        req.Header.Add("x-keyfactor-requested-with", "APIClient")
+        req.Header.Add("content-type", "application/json")
+        req.Header.Add("x-keyfactor-appkey", appkey)
+        req.Header.Add("authorization", "Basic "+creds)
+        req.Header.Add("x-certificateformat", "PEM")
+
+        // Send request and check status
+        res, err := http.DefaultClient.Do(req)
+        if err != nil {
+                b.Logger().Info("Enrollment failed: {{err}}", err)
+                return nil, nil
+        }
+        if res.StatusCode != 200 {
+                b.Logger().Info("Enrollment failed: server returned " + string(res.StatusCode))
+                return nil, nil
+        }
+
+        // Read response and return certificate and key
+        defer res.Body.Close()
+        body, err := ioutil.ReadAll(res.Body)
+        if err != nil {
+                b.Logger().Info("Error reading response: {{err}}", err)
+        }
+*/
+	b.Logger().Debug("issuer: " + issuer)
+	response := &logical.Response{
+                Data: map[string]interface{}{
+                        "certificate": issuer,
+		},
+	}
 	return response, nil
 }
 
@@ -299,8 +347,6 @@ func (b *backend) checkDomainAgainstRole(role string, domain string) bool {
 func (b *backend) handleWrite(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 	// Break up path
 	path := strings.Split(data.Get("path").(string), "/")
-	b.Logger().Info(path[0])
-	b.Logger().Info(path[1])
 	
 	// If issue, look up role then request certificate
 	if len(path) == 2 && path[0] == "issue" {
@@ -335,23 +381,25 @@ func (b *backend) handleWrite(ctx context.Context, req *logical.Request, data *f
 		b.Logger().Debug("roles: " + string(roleString))
 		return nil, nil
 	}
+
+	if len(path) == 1 && path[0] == "revoke" {
+                for k, v := range req.Data {
+                        if k == "serial_number" {
+				return b.revoke(v.(string))
+                        }
+                }
+		return nil, fmt.Errorf("Must supply serial_number parameter to revoke")
+
+	}
 	return nil, fmt.Errorf("Invalid path")
 }
 
 // Revoke certificate. TODO - change path
-func (b *backend) handleDelete(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
-	if req.ClientToken == "" {
-		return nil, fmt.Errorf("client token empty")
-	}
+func (b* backend) revoke(path string) (*logical.Response, error) {
+        path = strings.ReplaceAll(path, "-","")
+        path = strings.ReplaceAll(path, ":","")
+	fmt.Println("Revoking serial number " + path)
 
-	path := data.Get("path").(string)
-
-	if path == "all" {
-		b.store = make(map[string][]byte)
-		return nil, nil
-	}
-
-	fmt.Println(path)
 	b.Logger().Info(string(b.store[path]))
 
 	url := config["protocol"] + "://" + config["host"] + "/CMSAPI/Certificates/3/Revoke"
