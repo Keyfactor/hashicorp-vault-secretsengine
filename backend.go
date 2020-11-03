@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -28,6 +29,7 @@ import (
 var config map[string]string
 var roles map[string]map[string]bool
 var issuer string
+var issuer_chain []string
 
 // Factory configures and returns backend
 func Factory(ctx context.Context, conf *logical.BackendConfig) (logical.Backend, error) {
@@ -78,11 +80,11 @@ func (b *backend) paths() []*framework.Path {
 			Operations: map[logical.Operation]framework.OperationHandler{
 				logical.ReadOperation: &framework.PathOperation{
 					Callback: b.handleRead,
-					Summary:  "Retrieve the secret from the map.",
+					Summary:  "Retrieve a certificate by serial number",
 				},
 				logical.UpdateOperation: &framework.PathOperation{
 					Callback: b.handleWrite,
-					Summary:  "Store a secret at the specified location.",
+					Summary:  "Request a certificate",
 				},
 				logical.CreateOperation: &framework.PathOperation{
 					Callback: b.handleWrite,
@@ -108,11 +110,11 @@ func (b *backend) handleExistenceCheck(ctx context.Context, req *logical.Request
 
 // List all serial numbers known to engine
 func (b *backend) handleList(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+	if strings.Contains(data.Get("path").(string), "roles") {
+		return b.listRoles()
+	}
 	var list []string
 	for k, _ := range b.store {
-		if k == "roles" {
-			continue
-		}
 
 		list = append(list, k)
 	}
@@ -125,6 +127,19 @@ func (b *backend) handleList(ctx context.Context, req *logical.Request, data *fr
 	return resp, nil
 }
 
+func (b *backend) listRoles() (*logical.Response, error) {
+	var list []string
+	for k, _ := range roles {
+		list = append(list, k)
+	}
+	resp := &logical.Response{
+                Data: map[string]interface{} {
+                        "keys":list,
+                },
+        }
+        return resp, nil
+}
+
 // Lookup certificate by serial number
 func (b *backend) handleRead(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 	// Get and canonicalize serial number from Vault path
@@ -135,6 +150,9 @@ func (b *backend) handleRead(ctx context.Context, req *logical.Request, data *fr
 	b.Logger().Debug("requested " + path)
 	if path == "ca" {
 		return b.getCACert()
+	}
+	if path == "ca_chain" {
+		return b.getCertChain()
 	}
 
 	// Lookup and decode certificate stored by given serial number
@@ -153,7 +171,7 @@ func (b *backend) handleRead(ctx context.Context, req *logical.Request, data *fr
 }
 
 // Handle interface with crypto libraries and Keyfactor API to enroll a certificate with given content
-func (b *backend) submitCSR(host string, time string, template string, ca string, cn string, appkey string, creds string) ([]byte, []byte) {
+func (b *backend) submitCSR(host string, time string, template string, ca string, cn string, ip_sans []string, dns_sans []string, appkey string, creds string) ([]byte, []byte) {
 	// Generate keypair and CSR
 	keyBytes, _ := rsa.GenerateKey(rand.Reader, 2048)
 	subj := pkix.Name{
@@ -161,9 +179,16 @@ func (b *backend) submitCSR(host string, time string, template string, ca string
 	}
 	rawSubj := subj.ToRDNSequence()
 	asn1Subj, _ := asn1.Marshal(rawSubj)
+	var netIPSans []net.IP
+	for i := range ip_sans{
+		netIPSans = append(netIPSans, net.ParseIP(ip_sans[i]))
+	}
+	
 	csrtemplate := x509.CertificateRequest{
 		RawSubject:         asn1Subj,
 		SignatureAlgorithm: x509.SHA256WithRSA,
+		IPAddresses:	    netIPSans,
+		DNSNames:	    dns_sans,
 	}
 	csrBytes, _ := x509.CreateCertificateRequest(rand.Reader, &csrtemplate, keyBytes)
 	csrBuf := new(bytes.Buffer)
@@ -218,6 +243,8 @@ func (b *backend) requestCert(req *logical.Request, data *framework.FieldData, r
 	arg, _ := json.Marshal(req.Data)
 	b.Logger().Debug(string(arg))
 	cn := ""
+	var ip_sans []string
+	var dns_sans []string
 
 	// Get and validate subject info from Vault command
 	if len(req.Data) == 0 {
@@ -227,14 +254,25 @@ func (b *backend) requestCert(req *logical.Request, data *framework.FieldData, r
 		if k == "common_name" {
 			cn = v.(string)
 		}
+		if k == "ip_sans" {
+			ip_sans = strings.Split(v.(string), ",")
+		}
+		if k == "dns_sans" {
+			dns_sans = strings.Split(v.(string), ",")
+		}
 	}
 	if !b.checkDomainAgainstRole(role, cn) {
 		return nil, fmt.Errorf("Common name not allowed for provided role")
 	}
+	for u := range dns_sans {
+		if !b.checkDomainAgainstRole(role, dns_sans[u]) {
+			return nil, fmt.Errorf("Subject Alternative Name " + dns_sans[u] + " not allowed for provided role")
+		}
+	}
 
 	// Call to generate and submit the CSR. TODO - simplify submitCSR params?
 	b.Logger().Debug("About to connect to " + config["host"] + "for common name " + cn)
-	result, key := b.submitCSR(config["host"], timestamp, config["template"], config["CA"], cn, config["appkey"], config["creds"])
+	result, key := b.submitCSR(config["host"], timestamp, config["template"], config["CA"], cn, ip_sans, dns_sans, config["appkey"], config["creds"])
 	if result == nil || key == nil {
 		return nil, fmt.Errorf("Could not enroll certificate")
 	}
@@ -257,6 +295,7 @@ func (b *backend) requestCert(req *logical.Request, data *framework.FieldData, r
 
 	// Retain the issuer cert for calls to "vault read keyfactor/cert/ca"
 	issuer = certs[1]
+	issuer_chain = certs[1:]
 
 	// Conform response to Vault PKI API
 	response := &logical.Response{
@@ -274,40 +313,6 @@ func (b *backend) requestCert(req *logical.Request, data *framework.FieldData, r
 }
 
 func (b* backend) getCACert() (*logical.Response, error) {
-//	query := `(CertState -eq "6" OR CertState -eq "7") AND CA -eq "` + config["CA"] + `"`
-/*        url := config["protocol"] + "://" + host + "/KeyfactorAPI/Certificates/Query"
-        b.Logger().Debug("url: " + url)
-        bodyContent := "{\"CSR\": \"" + csrBuf.String() + "\",\"CertificateAuthority\":\"" + ca + "\",\"IncludeChain\": true, \"Metadata\": {}, \"Timestamp\": \"" + time + "\",\"Template\": \"" + template + "\",\"SANs\": {}}"
-        payload := strings.NewReader(bodyContent)
-        b.Logger().Debug("body: " + bodyContent)
-        req, err := http.NewRequest("POST", url, payload)
-        if err != nil {
-                b.Logger().Info("Error forming request: {{err}}", err)
-        }
-        req.Header.Add("x-keyfactor-requested-with", "APIClient")
-        req.Header.Add("content-type", "application/json")
-        req.Header.Add("x-keyfactor-appkey", appkey)
-        req.Header.Add("authorization", "Basic "+creds)
-        req.Header.Add("x-certificateformat", "PEM")
-
-        // Send request and check status
-        res, err := http.DefaultClient.Do(req)
-        if err != nil {
-                b.Logger().Info("Enrollment failed: {{err}}", err)
-                return nil, nil
-        }
-        if res.StatusCode != 200 {
-                b.Logger().Info("Enrollment failed: server returned " + string(res.StatusCode))
-                return nil, nil
-        }
-
-        // Read response and return certificate and key
-        defer res.Body.Close()
-        body, err := ioutil.ReadAll(res.Body)
-        if err != nil {
-                b.Logger().Info("Error reading response: {{err}}", err)
-        }
-*/
 	b.Logger().Debug("issuer: " + issuer)
 	response := &logical.Response{
                 Data: map[string]interface{}{
@@ -315,6 +320,20 @@ func (b* backend) getCACert() (*logical.Response, error) {
 		},
 	}
 	return response, nil
+}
+
+func (b *backend) getCertChain() (*logical.Response, error){
+	chain := ""
+	for c := range issuer_chain {
+		chain += issuer_chain[c]
+	}
+        b.Logger().Debug("issuer chain: " + chain)
+	response := &logical.Response{
+                Data: map[string]interface{}{
+                        "certificate": chain,
+                },
+        }
+        return response, nil
 }
 
 // Return true if a role is defined and false if not
@@ -382,6 +401,7 @@ func (b *backend) handleWrite(ctx context.Context, req *logical.Request, data *f
 		return nil, nil
 	}
 
+	// Certificate revocation
 	if len(path) == 1 && path[0] == "revoke" {
                 for k, v := range req.Data {
                         if k == "serial_number" {
@@ -394,7 +414,7 @@ func (b *backend) handleWrite(ctx context.Context, req *logical.Request, data *f
 	return nil, fmt.Errorf("Invalid path")
 }
 
-// Revoke certificate. TODO - change path
+// Revoke certificate.
 func (b* backend) revoke(path string) (*logical.Response, error) {
         path = strings.ReplaceAll(path, "-","")
         path = strings.ReplaceAll(path, ":","")
