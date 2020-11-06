@@ -170,9 +170,8 @@ func (b *backend) handleRead(ctx context.Context, req *logical.Request, data *fr
 	return resp, nil
 }
 
-// Handle interface with crypto libraries and Keyfactor API to enroll a certificate with given content
-func (b *backend) submitCSR(host string, time string, template string, ca string, cn string, ip_sans []string, dns_sans []string, appkey string, creds string) ([]byte, []byte) {
-	// Generate keypair and CSR
+// Generate keypair and CSR
+func (b *backend) generateCSR(cn string, ip_sans []string, dns_sans []string) (string, []byte) {
 	keyBytes, _ := rsa.GenerateKey(rand.Reader, 2048)
 	subj := pkix.Name{
 		CommonName: cn,
@@ -183,7 +182,7 @@ func (b *backend) submitCSR(host string, time string, template string, ca string
 	for i := range ip_sans{
 		netIPSans = append(netIPSans, net.ParseIP(ip_sans[i]))
 	}
-	
+
 	csrtemplate := x509.CertificateRequest{
 		RawSubject:         asn1Subj,
 		SignatureAlgorithm: x509.SHA256WithRSA,
@@ -193,6 +192,20 @@ func (b *backend) submitCSR(host string, time string, template string, ca string
 	csrBytes, _ := x509.CreateCertificateRequest(rand.Reader, &csrtemplate, keyBytes)
 	csrBuf := new(bytes.Buffer)
 	pem.Encode(csrBuf, &pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrBytes})
+	return csrBuf.String(), x509.MarshalPKCS1PrivateKey(keyBytes)
+}
+
+// Handle interface with Keyfactor API to enroll a certificate with given content
+func (b* backend) submitCSR(csr string) ([]string, string, error) {
+	host := config["host"]
+	template := config["template"]
+	ca := config["ca"]
+	appkey := config["appkey"]
+	creds := config["creds"]
+
+	location, _ := time.LoadLocation("UTC")
+        t := time.Now().In(location)
+        time := t.Format("2006-01-02T15:04:05")
 
 	// This is only needed when running as a vault extension
 	b.Logger().Debug("Closing idle connections")
@@ -201,7 +214,7 @@ func (b *backend) submitCSR(host string, time string, template string, ca string
 	// Build request
 	url := config["protocol"] + "://" + host + "/KeyfactorAPI/Enrollment/CSR"
 	b.Logger().Debug("url: " + url)
-	bodyContent := "{\"CSR\": \"" + csrBuf.String() + "\",\"CertificateAuthority\":\"" + ca + "\",\"IncludeChain\": true, \"Metadata\": {}, \"Timestamp\": \"" + time + "\",\"Template\": \"" + template + "\",\"SANs\": {}}"
+	bodyContent := "{\"CSR\": \"" + csr + "\",\"CertificateAuthority\":\"" + ca + "\",\"IncludeChain\": true, \"Metadata\": {}, \"Timestamp\": \"" + time + "\",\"Template\": \"" + template + "\",\"SANs\": {}}"
 	payload := strings.NewReader(bodyContent)
 	b.Logger().Debug("body: " + bodyContent)
 	req, err := http.NewRequest("POST", url, payload)
@@ -215,14 +228,15 @@ func (b *backend) submitCSR(host string, time string, template string, ca string
 	req.Header.Add("x-certificateformat", "PEM")
 
 	// Send request and check status
+	b.Logger().Debug("About to connect to " + config["host"] + "for csr submission")
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
 		b.Logger().Info("Enrollment failed: {{err}}", err)
-		return nil, nil
+		return nil, "", err
 	}
 	if res.StatusCode != 200 {
 		b.Logger().Info("Enrollment failed: server returned " + string(res.StatusCode))
-		return nil, nil
+		return nil, "", fmt.Errorf("Enrollment failed: server returned " + string(res.StatusCode))
 	}
 
 	// Read response and return certificate and key
@@ -230,16 +244,33 @@ func (b *backend) submitCSR(host string, time string, template string, ca string
 	body, err := ioutil.ReadAll(res.Body)
 	if err != nil {
 		b.Logger().Info("Error reading response: {{err}}", err)
+		return nil, "",  err
 	}
-	b.Logger().Debug("Returning body: " + string(body))
-	return body, x509.MarshalPKCS1PrivateKey(keyBytes)
+
+	// Parse response
+        var r map[string]interface{}
+        json.Unmarshal(body, &r)
+        inner := r["CertificateInformation"].(map[string]interface{})
+        certI := inner["Certificates"].([]interface{})
+        certs := make([]string, len(certI))
+        for i, v := range certI {
+                certs[i] = v.(string)
+                start := strings.Index(certs[i],"-----BEGIN CERTIFICATE-----")
+                certs[i] = certs[i][start:]
+        }
+        serial := inner["SerialNumber"].(string)
+        b.Logger().Debug("Cert content: " + certs[0])
+        b.Logger().Debug("Serial number: " + serial)
+        b.store[serial] = []byte(certs[0])
+
+	// Retain the issuer cert for calls to "vault read keyfactor/cert/ca" - TODO Get via Keyfactor API
+        issuer = certs[1]
+        issuer_chain = certs[1:]
+
+	return certs, serial, nil
 }
 
-
 func (b *backend) requestCert(req *logical.Request, data *framework.FieldData, role string) (*logical.Response, error) {
-	location, _ := time.LoadLocation("UTC")
-	t := time.Now().In(location)
-	timestamp := t.Format("2006-01-02T15:04:05")
 	arg, _ := json.Marshal(req.Data)
 	b.Logger().Debug(string(arg))
 	cn := ""
@@ -270,32 +301,12 @@ func (b *backend) requestCert(req *logical.Request, data *framework.FieldData, r
 		}
 	}
 
-	// Call to generate and submit the CSR. TODO - simplify submitCSR params?
-	b.Logger().Debug("About to connect to " + config["host"] + "for common name " + cn)
-	result, key := b.submitCSR(config["host"], timestamp, config["template"], config["CA"], cn, ip_sans, dns_sans, config["appkey"], config["creds"])
-	if result == nil || key == nil {
-		return nil, fmt.Errorf("Could not enroll certificate")
+	// Generate and submit the CSR
+	csr, key := b.generateCSR(cn, ip_sans, dns_sans)
+	certs, serial, err := b.submitCSR(csr)
+	if err != nil {
+		return nil, fmt.Errorf("Could not enroll certificate: {{err}}", err)
 	}
-
-	// Parse response. TODO - move to submitCSR?
-	var r map[string]interface{}
-	json.Unmarshal(result, &r)
-	inner := r["CertificateInformation"].(map[string]interface{})
-	certI := inner["Certificates"].([]interface{})
-	certs := make([]string, len(certI))
-	for i, v := range certI {
-		certs[i] = v.(string)
-		start := strings.Index(certs[i],"-----BEGIN CERTIFICATE-----")
-		certs[i] = certs[i][start:]
-	}
-	serial := inner["SerialNumber"].(string)
-	b.Logger().Debug("Cert content: " + certs[0])
-	b.Logger().Debug("Serial number: " + serial)
-	b.store[serial] = []byte(certs[0])
-
-	// Retain the issuer cert for calls to "vault read keyfactor/cert/ca"
-	issuer = certs[1]
-	issuer_chain = certs[1:]
 
 	// Conform response to Vault PKI API
 	response := &logical.Response{
@@ -366,13 +377,26 @@ func (b *backend) checkDomainAgainstRole(role string, domain string) bool {
 func (b *backend) handleWrite(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 	// Break up path
 	path := strings.Split(data.Get("path").(string), "/")
-	
+
 	// If issue, look up role then request certificate
 	if len(path) == 2 && path[0] == "issue" {
 		if !b.checkRoleExists(path[1]) {
 			return nil, fmt.Errorf("Cannot find provided role")
 		}
 		return b.requestCert(req, data, path[1])
+	}
+
+	// Sign a CSR that's provided to vault
+	if len(path) == 2 && path[0] == "sign" {
+                if !b.checkRoleExists(path[1]) {
+                        return nil, fmt.Errorf("Cannot find provided role")
+                }
+		for k, v := range req.Data {
+                        if k == "csr" {
+                                return b.sign(v.(string), path[1])
+                        }
+                }
+		return nil, fmt.Errorf("Must supply csr parameter to sign")
 	}
 
 	// If roles, add role
@@ -412,6 +436,38 @@ func (b *backend) handleWrite(ctx context.Context, req *logical.Request, data *f
 
 	}
 	return nil, fmt.Errorf("Invalid path")
+}
+
+func (b* backend) sign(csrString string, role string) (*logical.Response, error) {
+//	TODO - Get CSR to parse from CLI
+//	csr, err := x509.ParseCertificateRequest([]byte(csrString))
+//	if err != nil {
+//		return nil, fmt.Errorf("Could not parse CSR: {{err}}",err)
+//	}
+//	cn := csr.Subject.CommonName
+//	b.Logger().Debug("Got CSR with CN="+cn)
+//	if !b.checkDomainAgainstRole(role, cn) {
+//		return nil, fmt.Errorf("Common name {{cn}} is not allowed for provided role", cn)
+//	}
+	// TODO - check SANs
+	certs, serial, err := b.submitCSR(csrString)
+
+	if err != nil {
+                b.Logger().Info("Error signing certificate: {{err}}", err)
+                return nil,  err
+        }
+
+	response := &logical.Response{
+                Data: map[string]interface{}{
+                        "certificate":      certs[0],
+                        "issuing_ca":       certs[1],
+			"ca_chain":	    certs[1:],
+                        "serial_number":    serial,
+			"revocation_time":  0,
+                },
+        }
+	return response, nil
+
 }
 
 // Revoke certificate.
