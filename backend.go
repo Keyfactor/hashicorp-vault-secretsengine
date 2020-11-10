@@ -3,8 +3,10 @@ package keyfactor
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha1"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
@@ -92,6 +94,10 @@ func (b *backend) paths() []*framework.Path {
 				logical.ListOperation: &framework.PathOperation{
 					Callback: b.handleList,
 				},
+                                logical.DeleteOperation: &framework.PathOperation{
+                                        Callback: b.handleDelete,
+                                },
+
 			},
 
 			ExistenceCheck: b.handleExistenceCheck,
@@ -226,6 +232,13 @@ func (b* backend) submitCSR(csr string) ([]string, string, error) {
 	req.Header.Add("x-keyfactor-appkey", appkey)
 	req.Header.Add("authorization", "Basic "+creds)
 	req.Header.Add("x-certificateformat", "PEM")
+
+	secretBytes, _ := base64.StdEncoding.DecodeString(config["secret"])
+	macAlg := hmac.New(sha1.New, secretBytes)
+	macAlg.Write([]byte(bodyContent))
+	mac := base64.StdEncoding.EncodeToString(macAlg.Sum(nil))
+	b.Logger().Debug("MAC value: " + mac)
+	req.Header.Add("x-keyfactor-signature",mac)
 
 	// Send request and check status
 	b.Logger().Debug("About to connect to " + config["host"] + "for csr submission")
@@ -498,6 +511,17 @@ func (b* backend) revoke(path string) (*logical.Response, error) {
 	delete(b.store, path)
 
 	return nil, nil
+}
+
+func (b *backend) handleDelete(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+        path := strings.Split(data.Get("path").(string), "/")
+	if len(path) == 2 && path[0] == "roles" {
+		if !b.checkRoleExists(path[1]) {
+			return nil, fmt.Errorf("Role does not exist")
+		}
+		delete(roles,path[1])
+	}
+	return nil,nil
 }
 
 const keyfactorHelp = `
