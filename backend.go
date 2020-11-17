@@ -146,6 +146,69 @@ func (b *backend) listRoles() (*logical.Response, error) {
         return resp, nil
 }
 
+func (b *backend) readRole(roleName string) (*logical.Response, error) {
+	if !b.checkRoleExists(roleName){
+		return nil, fmt.Errorf("No such role")
+	}
+	role := roles["roleName"]
+	allow_subdomains := false
+	allowed_domains := []string{}
+	allow_localhost := false
+	for k, v := range role {
+		if k == "localhost" {
+			allow_localhost = true
+		}
+		allow_subdomains = v
+		allowed_domains = append(allowed_domains, k)
+	}
+	empty := []string{}
+	key_usages := []string{"DigitalSignature","KeyAgreement","KeyEncipherment"}
+	resp := &logical.Response{
+                Data: map[string]interface{}{
+			"allow_any_name":false,
+			"allow_bare_domains":true,
+			"allow_glob_domains":false,
+			"allow_ip_sans":true,
+			"allow_localhost":allow_localhost,
+			"allow_subdomains":allow_subdomains,
+			"allow_token_displayname":false,
+			"allowed_domains":allowed_domains,
+			"allowed_other_sans":nil,
+			"allowed_serial_numbers":empty,
+			"allowed_uri_sans":allowed_domains,
+			"basic_constraints_valid_for_non_ca":false,
+			"client_flag":false,
+			"code_signing_flag":false,
+			"country":empty,
+			"email_protection_flag":false,
+			"enforce_hostnames":true,
+			"ext_key_usage":empty,
+			"ext_key_usage_oids":empty,
+			"generate_lease":false,
+			"key_bits":2048,
+			"key_type":"rsa",
+			"key_usage":key_usages,
+			"locality":empty,
+			"max_ttl":"0s",
+			"no_store":false,
+			"not_before_duration":"10m",
+			"organization":empty,
+			"ou":empty,
+			"policy_identifiers":empty,
+			"postal_code":empty,
+			"province":empty,
+			"require_cn":true,
+			"server_flag":true,
+			"street_address":empty,
+			"ttl":"0s",
+			"use_csr_common_name":true,
+			"use_csr_sans":true,
+                },
+        }
+
+	return resp, nil
+}
+
 // Lookup certificate by serial number
 func (b *backend) handleRead(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 	// Get and canonicalize serial number from Vault path
@@ -159,6 +222,13 @@ func (b *backend) handleRead(ctx context.Context, req *logical.Request, data *fr
 	}
 	if path == "ca_chain" {
 		return b.getCertChain()
+	}
+	if strings.HasPrefix(path, "roles") {
+		paths := strings.Split(path, "/")
+		if len(paths) != 2 {
+			return nil, fmt.Errorf("Invalid role requested")
+		}
+		return b.readRole(paths[1])
 	}
 
 	// Lookup and decode certificate stored by given serial number
@@ -298,10 +368,10 @@ func (b *backend) requestCert(req *logical.Request, data *framework.FieldData, r
 		if k == "common_name" {
 			cn = v.(string)
 		}
-		if k == "ip_sans" {
+		if k == "ip_sans" {  // TODO - type switch
 			ip_sans = strings.Split(v.(string), ",")
 		}
-		if k == "dns_sans" {
+		if k == "dns_sans" {  // TODO - type switch
 			dns_sans = strings.Split(v.(string), ",")
 		}
 	}
@@ -421,10 +491,26 @@ func (b *backend) handleWrite(ctx context.Context, req *logical.Request, data *f
 		allowSubdomains := false
 		for k, v := range req.Data {
 			if k == "allowed_domains" {
-				domains = strings.Split(v.(string),",")
+				switch t := v.(type) {
+				case string:
+					domains = strings.Split(v.(string),",")
+				case []interface{}:
+					for d := range v.([]interface{}) {
+						domains = append(domains,v.([]interface{})[d].(string))
+					}
+				default:
+					return nil, fmt.Errorf("Invalid parameter value type: ",t)
+				}
 			}
 			if k == "allow_subdomains" {
-				allowSubdomains, _ = strconv.ParseBool(v.(string))
+				switch t := v.(type) {
+				case string:
+					allowSubdomains, _ = strconv.ParseBool(v.(string))
+				case bool:
+					allowSubdomains = v.(bool)
+				default:
+					return nil, fmt.Errorf("Invalid parameter value type: ", t)
+				}
 			}
 		}
 
