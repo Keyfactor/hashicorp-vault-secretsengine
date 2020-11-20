@@ -114,8 +114,42 @@ func (b *backend) handleExistenceCheck(ctx context.Context, req *logical.Request
 	return out != nil, nil
 }
 
+func (b *backend) save(ctx context.Context, req *logical.Request)  {
+	roleString, _ := jsonutil.EncodeJSON(roles)
+	req.Storage.Put(ctx, &logical.StorageEntry{Key: "roles", Value: []byte(roleString)})
+	certs, _ := jsonutil.EncodeJSON(issuer_chain)
+	req.Storage.Put(ctx, &logical.StorageEntry{Key: "certs", Value: []byte(certs)})
+}
+
+func (b *backend) load(ctx context.Context, req *logical.Request) {
+	roleBuf, _ :=req.Storage.Get(ctx, "roles")
+	if roleBuf != nil {
+		var roleObj interface{}
+		jsonutil.DecodeJSON(roleBuf.Value, &roleObj)
+		roleMap := roleObj.(map[string]interface{})
+		for k, v := range roleMap {
+			roles[k] = make(map[string]bool)
+			domains := v.(map[string]interface{})
+			for kk, vv := range domains {
+				roles[k][kk] = vv.(bool)
+			}
+		}
+	}
+
+	certBuf, _ := req.Storage.Get(ctx, "certs")
+	if certBuf != nil {
+		var certObj interface{}
+		jsonutil.DecodeJSON(certBuf.Value, &certObj)
+		if certObj != nil {
+			issuer_chain = certObj.([]string)
+			issuer = issuer_chain[0]
+		}
+	}
+}
+
 // List all serial numbers known to engine
 func (b *backend) handleList(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+	b.load(ctx, req)
 	if strings.Contains(data.Get("path").(string), "roles") {
 		return b.listRoles()
 	}
@@ -150,7 +184,7 @@ func (b *backend) readRole(roleName string) (*logical.Response, error) {
 	if !b.checkRoleExists(roleName){
 		return nil, fmt.Errorf("No such role")
 	}
-	role := roles["roleName"]
+	role := roles[roleName]
 	allow_subdomains := false
 	allowed_domains := []string{}
 	allow_localhost := false
@@ -211,12 +245,14 @@ func (b *backend) readRole(roleName string) (*logical.Response, error) {
 
 // Lookup certificate by serial number
 func (b *backend) handleRead(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+	b.load(ctx, req)
 	// Get and canonicalize serial number from Vault path
 	path := data.Get("path").(string)
 	path = strings.ReplaceAll(path, "-","")
 	path = strings.ReplaceAll(path, ":","")
 	path = strings.ReplaceAll(path, "cert/","")
 	b.Logger().Debug("requested " + path)
+
 	if path == "ca" {
 		return b.getCACert()
 	}
@@ -458,9 +494,9 @@ func (b *backend) checkDomainAgainstRole(role string, domain string) bool {
 
 // Add role or enroll certificate
 func (b *backend) handleWrite(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+	b.load(ctx, req)
 	// Break up path
 	path := strings.Split(data.Get("path").(string), "/")
-
 	// If issue, look up role then request certificate
 	if len(path) == 2 && path[0] == "issue" {
 		if !b.checkRoleExists(path[1]) {
@@ -519,8 +555,10 @@ func (b *backend) handleWrite(ctx context.Context, req *logical.Request, data *f
 		for i := range domains{
 			roles[path[1]][domains[i]] = allowSubdomains
 		}
+		b.save(ctx, req)
 		roleString, _ := jsonutil.EncodeJSON(roles)
 		b.Logger().Debug("roles: " + string(roleString))
+
 		return nil, nil
 	}
 
@@ -600,7 +638,8 @@ func (b* backend) revoke(path string) (*logical.Response, error) {
 }
 
 func (b *backend) handleDelete(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
-        path := strings.Split(data.Get("path").(string), "/")
+	b.load(ctx, req)
+	path := strings.Split(data.Get("path").(string), "/")
 	if len(path) == 2 && path[0] == "roles" {
 		if !b.checkRoleExists(path[1]) {
 			return nil, fmt.Errorf("Role does not exist")
