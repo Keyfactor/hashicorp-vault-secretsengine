@@ -30,7 +30,6 @@ import (
 
 var config map[string]string
 var roles map[string]map[string]bool
-var issuer string
 var issuer_chain []string
 
 // Factory configures and returns backend
@@ -141,8 +140,11 @@ func (b *backend) load(ctx context.Context, req *logical.Request) {
 		var certObj interface{}
 		jsonutil.DecodeJSON(certBuf.Value, &certObj)
 		if certObj != nil {
-			issuer_chain = certObj.([]string)
-			issuer = issuer_chain[0]
+			certArr := certObj.([]interface{})
+			issuer_chain = make([]string, len(certArr))
+			for k := range certArr {
+				issuer_chain[k] = certArr[k].(string)
+			}
 		}
 	}
 }
@@ -246,6 +248,7 @@ func (b *backend) readRole(roleName string) (*logical.Response, error) {
 // Lookup certificate by serial number
 func (b *backend) handleRead(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 	b.load(ctx, req)
+
 	// Get and canonicalize serial number from Vault path
 	path := data.Get("path").(string)
 	path = strings.ReplaceAll(path, "-","")
@@ -383,13 +386,12 @@ func (b* backend) submitCSR(csr string) ([]string, string, error) {
         b.store[serial] = []byte(certs[0])
 
 	// Retain the issuer cert for calls to "vault read keyfactor/cert/ca" - TODO Get via Keyfactor API
-        issuer = certs[1]
         issuer_chain = certs[1:]
 
 	return certs, serial, nil
 }
 
-func (b *backend) requestCert(req *logical.Request, data *framework.FieldData, role string) (*logical.Response, error) {
+func (b *backend) requestCert(ctx context.Context, req *logical.Request, data *framework.FieldData, role string) (*logical.Response, error) {
 	arg, _ := json.Marshal(req.Data)
 	b.Logger().Debug(string(arg))
 	cn := ""
@@ -426,6 +428,7 @@ func (b *backend) requestCert(req *logical.Request, data *framework.FieldData, r
 	if err != nil {
 		return nil, fmt.Errorf("Could not enroll certificate: {{err}}", err)
 	}
+	b.save(ctx, req)
 
 	// Conform response to Vault PKI API
 	response := &logical.Response{
@@ -443,10 +446,13 @@ func (b *backend) requestCert(req *logical.Request, data *framework.FieldData, r
 }
 
 func (b* backend) getCACert() (*logical.Response, error) {
-	b.Logger().Debug("issuer: " + issuer)
+	if len(issuer_chain) == 0 {
+		return nil, fmt.Errorf("CA certificate unknown")
+	}
+	b.Logger().Debug("issuer: " + issuer_chain[0])
 	response := &logical.Response{
                 Data: map[string]interface{}{
-                        "certificate": issuer,
+                        "certificate": issuer_chain[0],
 		},
 	}
 	return response, nil
@@ -502,7 +508,7 @@ func (b *backend) handleWrite(ctx context.Context, req *logical.Request, data *f
 		if !b.checkRoleExists(path[1]) {
 			return nil, fmt.Errorf("Cannot find provided role")
 		}
-		return b.requestCert(req, data, path[1])
+		return b.requestCert(ctx, req, data, path[1])
 	}
 
 	// Sign a CSR that's provided to vault
