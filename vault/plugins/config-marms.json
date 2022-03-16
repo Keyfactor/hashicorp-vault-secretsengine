@@ -1,8 +1,0 @@
-{
-	"host":"marriott.thedemodrive.com",
-	"creds":"VEhFREVNT0RSSVZFXHZib2xnYXJwb3BvdjpLZXlmYWN0b3Ix",
-	"appkey":"jsu8acRNiVXQwg==",
-	"template":"DDWebServer1yr",
-	"protocol":"https",
-	"CA":"CN=Keyfactor Demo Drive CA 1,O=Keyfactor Inc"
-}
