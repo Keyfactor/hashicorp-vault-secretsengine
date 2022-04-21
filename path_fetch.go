@@ -39,19 +39,19 @@ func pathFetchCAChain(b *backend) *framework.Path {
 	}
 }
 
-// Returns the CRL in raw format
-func pathFetchCRL(b *backend) *framework.Path {
-	return &framework.Path{
-		Pattern: `crl(/pem)?`,
+// // Returns the CRL in raw format
+// func pathFetchCRL(b *backend) *framework.Path {
+// 	return &framework.Path{
+// 		Pattern: `crl(/pem)?`,
 
-		Callbacks: map[logical.Operation]framework.OperationFunc{
-			logical.ReadOperation: b.pathFetchRead,
-		},
+// 		Callbacks: map[logical.Operation]framework.OperationFunc{
+// 			logical.ReadOperation: b.pathFetchRead,
+// 		},
 
-		HelpSynopsis:    pathFetchHelpSyn,
-		HelpDescription: pathFetchHelpDesc,
-	}
-}
+// 		HelpSynopsis:    pathFetchHelpSyn,
+// 		HelpDescription: pathFetchHelpDesc,
+// 	}
+// }
 
 // Returns any valid (non-revoked) cert. Since "ca" fits the pattern, this path
 // also handles returning the CA cert in a non-raw format.
@@ -76,18 +76,18 @@ hyphen-separated octal`,
 }
 
 // This returns the CRL in a non-raw format
-func pathFetchCRLViaCertPath(b *backend) *framework.Path {
-	return &framework.Path{
-		Pattern: `cert/crl`,
+// func pathFetchCRLViaCertPath(b *backend) *framework.Path {
+// 	return &framework.Path{
+// 		Pattern: `cert/crl`,
 
-		Callbacks: map[logical.Operation]framework.OperationFunc{
-			logical.ReadOperation: b.pathFetchRead,
-		},
+// 		Callbacks: map[logical.Operation]framework.OperationFunc{
+// 			logical.ReadOperation: b.pathFetchRead,
+// 		},
 
-		HelpSynopsis:    pathFetchHelpSyn,
-		HelpDescription: pathFetchHelpDesc,
-	}
-}
+// 		HelpSynopsis:    pathFetchHelpSyn,
+// 		HelpDescription: pathFetchHelpDesc,
+// 	}
+// }
 
 // This returns the list of serial numbers for certs
 func pathFetchListCerts(b *backend) *framework.Path {

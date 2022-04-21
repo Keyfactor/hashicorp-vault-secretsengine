@@ -46,6 +46,7 @@ func pathSign(b *backend) *framework.Path {
 		Type:        framework.TypeString,
 		Default:     "",
 		Description: `PEM-format CSR to be signed.`,
+		Required:    true,
 	}
 
 	return ret
@@ -69,14 +70,14 @@ func (b *backend) pathIssue(ctx context.Context, req *logical.Request, data *fra
 		return logical.ErrorResponse("role key type \"any\" not allowed for issuing certificates, only signing"), nil
 	}
 
-	return b.pathIssueSignCert(ctx, req, data, role, false, false)
+	return b.pathIssueSignCert(ctx, req, data, role)
 }
 
 // pathSign issues a certificate from a submitted CSR, subject to role
 // restrictions
 func (b *backend) pathSign(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 	roleName := data.Get("role").(string)
-
+	csr := data.Get("csr").(string)
 	// Get the role
 	role, err := b.getRole(ctx, req.Storage, roleName)
 	if err != nil {
@@ -86,56 +87,23 @@ func (b *backend) pathSign(ctx context.Context, req *logical.Request, data *fram
 		return logical.ErrorResponse(fmt.Sprintf("unknown role: %s", roleName)), nil
 	}
 
-	return b.pathIssueSignCert(ctx, req, data, role, true, false)
+	certs, serial, errr := b.submitCSR(ctx, req, csr)
+
+	if errr != nil {
+		return nil, fmt.Errorf("could not sign csr: %s", errr)
+	}
+	response := &logical.Response{
+		Data: map[string]interface{}{
+			"certificate":   certs[0],
+			"issuing_ca":    certs[1],
+			"serial_number": serial,
+		},
+	}
+
+	return response, nil
 }
 
-// pathSignVerbatim issues a certificate from a submitted CSR, *not* subject to
-// role restrictions
-func (b *backend) pathSignVerbatim(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
-
-	roleName := data.Get("role").(string)
-
-	// Get the role if one was specified
-	role, err := b.getRole(ctx, req.Storage, roleName)
-	if err != nil {
-		return nil, err
-	}
-
-	entry := &roleEntry{
-		AllowLocalhost:       true,
-		AllowAnyName:         true,
-		AllowIPSANs:          true,
-		EnforceHostnames:     false,
-		KeyType:              "any",
-		UseCSRCommonName:     true,
-		UseCSRSANs:           true,
-		AllowedURISANs:       []string{"*"},
-		AllowedSerialNumbers: []string{"*"},
-		GenerateLease:        new(bool),
-		KeyUsage:             data.Get("key_usage").([]string),
-		ExtKeyUsage:          data.Get("ext_key_usage").([]string),
-		ExtKeyUsageOIDs:      data.Get("ext_key_usage_oids").([]string),
-	}
-
-	*entry.GenerateLease = false
-
-	if role != nil {
-		if role.TTL > 0 {
-			entry.TTL = role.TTL
-		}
-		if role.MaxTTL > 0 {
-			entry.MaxTTL = role.MaxTTL
-		}
-		if role.GenerateLease != nil {
-			*entry.GenerateLease = *role.GenerateLease
-		}
-		entry.NoStore = role.NoStore
-	}
-
-	return b.pathIssueSignCert(ctx, req, data, entry, true, true)
-}
-
-func (b *backend) pathIssueSignCert(ctx context.Context, req *logical.Request, data *framework.FieldData, role *roleEntry, useCSR, useCSRValues bool) (*logical.Response, error) {
+func (b *backend) pathIssueSignCert(ctx context.Context, req *logical.Request, data *framework.FieldData, role *roleEntry) (*logical.Response, error) {
 	// If storing the certificate and on a performance standby, forward this request on to the primary
 	if !role.NoStore && b.System().ReplicationState().HasState(consts.ReplicationPerformanceStandby) {
 		return nil, logical.ErrReadOnly
@@ -184,28 +152,11 @@ func (b *backend) pathIssueSignCert(ctx context.Context, req *logical.Request, d
 		}
 	}
 
-	// format := getFormat(data)
-	// if format == "" {
-	// 	return logical.ErrorResponse(
-	// 		`the "format" path parameter must be "pem", "der", or "pem_bundle"`), nil
-	// }
-
-	//var caErr error
-	// signingBundle, caErr := fetchCAInfo(ctx, req)
-	// switch caErr.(type) {
-	// case errutil.UserError:
-	// 	return nil, errutil.UserError{Err: fmt.Sprintf(
-	// 		"could not fetch the CA certificate (was one set?): %s", caErr)}
-	// case errutil.InternalError:
-	// 	return nil, errutil.InternalError{Err: fmt.Sprintf(
-	// 		"error fetching CA certificate: %s", caErr)}
-	// }
-
 	csr, key := b.generateCSR(cn, ip_sans, dns_sans)
 	certs, serial, errr := b.submitCSR(ctx, req, csr)
 
 	if errr != nil {
-		return nil, fmt.Errorf("Could not enroll certificate: {{err}}", errr)
+		return nil, fmt.Errorf("could not enroll certificate: %s", errr)
 	}
 
 	// Conform response to Vault PKI API
@@ -353,6 +304,7 @@ func (b *backend) pathIssueSignCert(ctx context.Context, req *logical.Request, d
 
 const pathIssueHelpSyn = `
 Request a certificate using a certain role with the provided details.
+example: vault write keyfactor/issue/<role> common_name=<cn> dns_sans=<dns sans>
 `
 
 const pathIssueHelpDesc = `
@@ -367,6 +319,7 @@ sign path instead.
 
 const pathSignHelpSyn = `
 Request certificates using a certain role with the provided details.
+example: vault write keyfactor/sign/<role> csr=<csr>
 `
 
 const pathSignHelpDesc = `
@@ -376,4 +329,6 @@ requested common name is allowed by the role policy.
 
 This path requires a CSR; if you want Vault to generate a private key
 for you, use the issue path instead.
+
+Note: the CSR must contain at least one DNS SANs entry.
 `

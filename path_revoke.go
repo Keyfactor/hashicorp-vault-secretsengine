@@ -56,11 +56,3 @@ Revoke a certificate by serial number.
 const pathRevokeHelpDesc = `
 This allows certificates to be revoked using its serial number. A root token is required.
 `
-
-const pathRotateCRLHelpSyn = `
-Force a rebuild of the CRL.
-`
-
-const pathRotateCRLHelpDesc = `
-Force a rebuild of the CRL. This can be used to remove expired certificates from it if no certificates have been revoked. A root token is required.
-`

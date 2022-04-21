@@ -2,60 +2,54 @@ package keyfactor
 
 import (
 	"context"
-	"crypto/x509/pkix"
-	"encoding/asn1"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"net/http"
-	"regexp"
 	"strings"
 	"time"
 
-	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/helper/errutil"
 	"github.com/hashicorp/vault/sdk/logical"
-	"github.com/ryanuber/go-glob"
-	"golang.org/x/net/idna"
 )
 
-type inputBundle struct {
-	role    *roleEntry
-	req     *logical.Request
-	apiData *framework.FieldData
-}
+// type inputBundle struct {
+// 	role    *roleEntry
+// 	req     *logical.Request
+// 	apiData *framework.FieldData
+// }
 
-var (
-	// A note on hostnameRegex: although we set the StrictDomainName option
-	// when doing the idna conversion, this appears to only affect output, not
-	// input, so it will allow e.g. host^123.example.com straight through. So
-	// we still need to use this to check the output.
-	hostnameRegex                = regexp.MustCompile(`^(\*\.)?(([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9])\.)*([A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9\-]*[A-Za-z0-9])\.?$`)
-	oidExtensionBasicConstraints = []int{2, 5, 29, 19}
-	oidExtensionSubjectAltName   = []int{2, 5, 29, 17}
-)
+// var (
+// 	// A note on hostnameRegex: although we set the StrictDomainName option
+// 	// when doing the idna conversion, this appears to only affect output, not
+// 	// input, so it will allow e.g. host^123.example.com straight through. So
+// 	// we still need to use this to check the output.
+// 	hostnameRegex                = regexp.MustCompile(`^(\*\.)?(([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9])\.)*([A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9\-]*[A-Za-z0-9])\.?$`)
+// 	oidExtensionBasicConstraints = []int{2, 5, 29, 19}
+// 	oidExtensionSubjectAltName   = []int{2, 5, 29, 17}
+// )
 
-func oidInExtensions(oid asn1.ObjectIdentifier, extensions []pkix.Extension) bool {
-	for _, e := range extensions {
-		if e.Id.Equal(oid) {
-			return true
-		}
-	}
-	return false
-}
+// func oidInExtensions(oid asn1.ObjectIdentifier, extensions []pkix.Extension) bool {
+// 	for _, e := range extensions {
+// 		if e.Id.Equal(oid) {
+// 			return true
+// 		}
+// 	}
+// 	return false
+// }
 
-func getFormat(data *framework.FieldData) string {
-	format := data.Get("format").(string)
-	switch format {
-	case "pem":
-	case "der":
-	case "pem_bundle":
-	default:
-		format = ""
-	}
-	return format
-}
+// func getFormat(data *framework.FieldData) string {
+// 	format := data.Get("format").(string)
+// 	switch format {
+// 	case "pem":
+// 	case "der":
+// 	case "pem_bundle":
+// 	default:
+// 		format = ""
+// 	}
+// 	return format
+// }
 
 //fetch the CA info from keyfactor
 func fetchCAInfo(ctx context.Context, req *logical.Request, b *backend) (response *logical.Response, retErr error) {
@@ -347,189 +341,189 @@ func fetchCertBySerial(ctx context.Context, req *logical.Request, prefix, serial
 // Given a set of requested names for a certificate, verifies that all of them
 // match the various toggles set in the role for controlling issuance.
 // If one does not pass, it is returned in the string argument.
-func validateNames(b *backend, data *inputBundle, names []string) string {
-	for _, name := range names {
-		sanitizedName := name
-		emailDomain := name
-		isEmail := false
-		isWildcard := false
+// func validateNames(b *backend, data *inputBundle, names []string) string {
+// 	for _, name := range names {
+// 		sanitizedName := name
+// 		emailDomain := name
+// 		isEmail := false
+// 		isWildcard := false
 
-		// If it has an @, assume it is an email address and separate out the
-		// user from the hostname portion so that we can act on the hostname.
-		// Note that this matches behavior from the alt_names parameter. If it
-		// ends up being problematic for users, I guess that could be separated
-		// into dns_names and email_names in the future to be explicit, but I
-		// don't think this is likely.
-		if strings.Contains(name, "@") {
-			splitEmail := strings.Split(name, "@")
-			if len(splitEmail) != 2 {
-				return name
-			}
-			sanitizedName = splitEmail[1]
-			emailDomain = splitEmail[1]
-			isEmail = true
-		}
+// 		// If it has an @, assume it is an email address and separate out the
+// 		// user from the hostname portion so that we can act on the hostname.
+// 		// Note that this matches behavior from the alt_names parameter. If it
+// 		// ends up being problematic for users, I guess that could be separated
+// 		// into dns_names and email_names in the future to be explicit, but I
+// 		// don't think this is likely.
+// 		if strings.Contains(name, "@") {
+// 			splitEmail := strings.Split(name, "@")
+// 			if len(splitEmail) != 2 {
+// 				return name
+// 			}
+// 			sanitizedName = splitEmail[1]
+// 			emailDomain = splitEmail[1]
+// 			isEmail = true
+// 		}
 
-		// If we have an asterisk as the first part of the domain name, mark it
-		// as wildcard and set the sanitized name to the remainder of the
-		// domain
-		if strings.HasPrefix(sanitizedName, "*.") {
-			sanitizedName = sanitizedName[2:]
-			isWildcard = true
-		}
+// 		// If we have an asterisk as the first part of the domain name, mark it
+// 		// as wildcard and set the sanitized name to the remainder of the
+// 		// domain
+// 		if strings.HasPrefix(sanitizedName, "*.") {
+// 			sanitizedName = sanitizedName[2:]
+// 			isWildcard = true
+// 		}
 
-		// Email addresses using wildcard domain names do not make sense
-		if isEmail && isWildcard {
-			return name
-		}
+// 		// Email addresses using wildcard domain names do not make sense
+// 		if isEmail && isWildcard {
+// 			return name
+// 		}
 
-		// AllowAnyName is checked after this because EnforceHostnames still
-		// applies when allowing any name. Also, we check the sanitized name to
-		// ensure that we are not either checking a full email address or a
-		// wildcard prefix.
-		if data.role.EnforceHostnames {
-			p := idna.New(
-				idna.StrictDomainName(true),
-				idna.VerifyDNSLength(true),
-			)
-			converted, err := p.ToASCII(sanitizedName)
-			if err != nil {
-				return name
-			}
-			if !hostnameRegex.MatchString(converted) {
-				return name
-			}
-		}
+// 		// AllowAnyName is checked after this because EnforceHostnames still
+// 		// applies when allowing any name. Also, we check the sanitized name to
+// 		// ensure that we are not either checking a full email address or a
+// 		// wildcard prefix.
+// 		if data.role.EnforceHostnames {
+// 			p := idna.New(
+// 				idna.StrictDomainName(true),
+// 				idna.VerifyDNSLength(true),
+// 			)
+// 			converted, err := p.ToASCII(sanitizedName)
+// 			if err != nil {
+// 				return name
+// 			}
+// 			if !hostnameRegex.MatchString(converted) {
+// 				return name
+// 			}
+// 		}
 
-		// Self-explanatory
-		if data.role.AllowAnyName {
-			continue
-		}
+// 		// Self-explanatory
+// 		if data.role.AllowAnyName {
+// 			continue
+// 		}
 
-		// The following blocks all work the same basic way:
-		// 1) If a role allows a certain class of base (localhost, token
-		// display name, role-configured domains), perform further tests
-		//
-		// 2) If there is a perfect match on either the name itself or it's an
-		// email address with a perfect match on the hostname portion, allow it
-		//
-		// 3) If subdomains are allowed, we check based on the sanitized name;
-		// note that if not a wildcard, will be equivalent to the email domain
-		// for email checks, and we already checked above for both a wildcard
-		// and email address being present in the same name
-		// 3a) First we check for a non-wildcard subdomain, as in <name>.<base>
-		// 3b) Then we check if it's a wildcard and the base domain is a match
-		//
-		// Variances are noted in-line
+// 		// The following blocks all work the same basic way:
+// 		// 1) If a role allows a certain class of base (localhost, token
+// 		// display name, role-configured domains), perform further tests
+// 		//
+// 		// 2) If there is a perfect match on either the name itself or it's an
+// 		// email address with a perfect match on the hostname portion, allow it
+// 		//
+// 		// 3) If subdomains are allowed, we check based on the sanitized name;
+// 		// note that if not a wildcard, will be equivalent to the email domain
+// 		// for email checks, and we already checked above for both a wildcard
+// 		// and email address being present in the same name
+// 		// 3a) First we check for a non-wildcard subdomain, as in <name>.<base>
+// 		// 3b) Then we check if it's a wildcard and the base domain is a match
+// 		//
+// 		// Variances are noted in-line
 
-		if data.role.AllowLocalhost {
-			if name == "localhost" ||
-				name == "localdomain" ||
-				(isEmail && emailDomain == "localhost") ||
-				(isEmail && emailDomain == "localdomain") {
-				continue
-			}
+// 		if data.role.AllowLocalhost {
+// 			if name == "localhost" ||
+// 				name == "localdomain" ||
+// 				(isEmail && emailDomain == "localhost") ||
+// 				(isEmail && emailDomain == "localdomain") {
+// 				continue
+// 			}
 
-			if data.role.AllowSubdomains {
-				// It is possible, if unlikely, to have a subdomain of "localhost"
-				if strings.HasSuffix(sanitizedName, ".localhost") ||
-					(isWildcard && sanitizedName == "localhost") {
-					continue
-				}
+// 			if data.role.AllowSubdomains {
+// 				// It is possible, if unlikely, to have a subdomain of "localhost"
+// 				if strings.HasSuffix(sanitizedName, ".localhost") ||
+// 					(isWildcard && sanitizedName == "localhost") {
+// 					continue
+// 				}
 
-				// A subdomain of "localdomain" is also not entirely uncommon
-				if strings.HasSuffix(sanitizedName, ".localdomain") ||
-					(isWildcard && sanitizedName == "localdomain") {
-					continue
-				}
-			}
-		}
+// 				// A subdomain of "localdomain" is also not entirely uncommon
+// 				if strings.HasSuffix(sanitizedName, ".localdomain") ||
+// 					(isWildcard && sanitizedName == "localdomain") {
+// 					continue
+// 				}
+// 			}
+// 		}
 
-		if data.role.AllowTokenDisplayName {
-			if name == data.req.DisplayName {
-				continue
-			}
+// 		if data.role.AllowTokenDisplayName {
+// 			if name == data.req.DisplayName {
+// 				continue
+// 			}
 
-			if data.role.AllowSubdomains {
-				if isEmail {
-					// If it's an email address, we need to parse the token
-					// display name in order to do a proper comparison of the
-					// subdomain
-					if strings.Contains(data.req.DisplayName, "@") {
-						splitDisplay := strings.Split(data.req.DisplayName, "@")
-						if len(splitDisplay) == 2 {
-							// Compare the sanitized name against the hostname
-							// portion of the email address in the broken
-							// display name
-							if strings.HasSuffix(sanitizedName, "."+splitDisplay[1]) {
-								continue
-							}
-						}
-					}
-				}
+// 			if data.role.AllowSubdomains {
+// 				if isEmail {
+// 					// If it's an email address, we need to parse the token
+// 					// display name in order to do a proper comparison of the
+// 					// subdomain
+// 					if strings.Contains(data.req.DisplayName, "@") {
+// 						splitDisplay := strings.Split(data.req.DisplayName, "@")
+// 						if len(splitDisplay) == 2 {
+// 							// Compare the sanitized name against the hostname
+// 							// portion of the email address in the broken
+// 							// display name
+// 							if strings.HasSuffix(sanitizedName, "."+splitDisplay[1]) {
+// 								continue
+// 							}
+// 						}
+// 					}
+// 				}
 
-				if strings.HasSuffix(sanitizedName, "."+data.req.DisplayName) ||
-					(isWildcard && sanitizedName == data.req.DisplayName) {
-					continue
-				}
-			}
-		}
+// 				if strings.HasSuffix(sanitizedName, "."+data.req.DisplayName) ||
+// 					(isWildcard && sanitizedName == data.req.DisplayName) {
+// 					continue
+// 				}
+// 			}
+// 		}
 
-		if len(data.role.AllowedDomains) > 0 {
-			valid := false
-			for _, currDomain := range data.role.AllowedDomains {
-				// If there is, say, a trailing comma, ignore it
-				if currDomain == "" {
-					continue
-				}
+// 		if len(data.role.AllowedDomains) > 0 {
+// 			valid := false
+// 			for _, currDomain := range data.role.AllowedDomains {
+// 				// If there is, say, a trailing comma, ignore it
+// 				if currDomain == "" {
+// 					continue
+// 				}
 
-				if data.role.AllowedDomainsTemplate {
-					isTemplate, _ := framework.ValidateIdentityTemplate(currDomain)
-					if isTemplate && data.req.EntityID != "" {
-						tmpCurrDomain, err := framework.PopulateIdentityTemplate(currDomain, data.req.EntityID, b.System())
-						if err != nil {
-							continue
-						}
+// 				if data.role.AllowedDomainsTemplate {
+// 					isTemplate, _ := framework.ValidateIdentityTemplate(currDomain)
+// 					if isTemplate && data.req.EntityID != "" {
+// 						tmpCurrDomain, err := framework.PopulateIdentityTemplate(currDomain, data.req.EntityID, b.System())
+// 						if err != nil {
+// 							continue
+// 						}
 
-						currDomain = tmpCurrDomain
-					}
-				}
+// 						currDomain = tmpCurrDomain
+// 					}
+// 				}
 
-				// First, allow an exact match of the base domain if that role flag
-				// is enabled
-				if data.role.AllowBareDomains &&
-					(name == currDomain ||
-						(isEmail && emailDomain == currDomain)) {
-					valid = true
-					break
-				}
+// 				// First, allow an exact match of the base domain if that role flag
+// 				// is enabled
+// 				if data.role.AllowBareDomains &&
+// 					(name == currDomain ||
+// 						(isEmail && emailDomain == currDomain)) {
+// 					valid = true
+// 					break
+// 				}
 
-				if data.role.AllowSubdomains {
-					if strings.HasSuffix(sanitizedName, "."+currDomain) ||
-						(isWildcard && sanitizedName == currDomain) {
-						valid = true
-						break
-					}
-				}
+// 				if data.role.AllowSubdomains {
+// 					if strings.HasSuffix(sanitizedName, "."+currDomain) ||
+// 						(isWildcard && sanitizedName == currDomain) {
+// 						valid = true
+// 						break
+// 					}
+// 				}
 
-				if data.role.AllowGlobDomains &&
-					strings.Contains(currDomain, "*") &&
-					glob.Glob(currDomain, name) {
-					valid = true
-					break
-				}
-			}
+// 				if data.role.AllowGlobDomains &&
+// 					strings.Contains(currDomain, "*") &&
+// 					glob.Glob(currDomain, name) {
+// 					valid = true
+// 					break
+// 				}
+// 			}
 
-			if valid {
-				continue
-			}
-		}
+// 			if valid {
+// 				continue
+// 			}
+// 		}
 
-		return name
-	}
+// 		return name
+// 	}
 
-	return ""
-}
+// 	return ""
+// }
 
 // validateOtherSANs checks if the values requested are allowed. If an OID
 // isn't allowed, it will be returned as the first string. If a value isn't
@@ -592,28 +586,28 @@ func parseOtherSANs(others []string) (map[string][]string, error) {
 	return result, nil
 }
 
-func validateSerialNumber(data *inputBundle, serialNumber string) string {
-	valid := false
-	if len(data.role.AllowedSerialNumbers) > 0 {
-		for _, currSerialNumber := range data.role.AllowedSerialNumbers {
-			if currSerialNumber == "" {
-				continue
-			}
+// func validateSerialNumber(data *inputBundle, serialNumber string) string {
+// 	valid := false
+// 	if len(data.role.AllowedSerialNumbers) > 0 {
+// 		for _, currSerialNumber := range data.role.AllowedSerialNumbers {
+// 			if currSerialNumber == "" {
+// 				continue
+// 			}
 
-			if (strings.Contains(currSerialNumber, "*") &&
-				glob.Glob(currSerialNumber, serialNumber)) ||
-				currSerialNumber == serialNumber {
-				valid = true
-				break
-			}
-		}
-	}
-	if !valid {
-		return serialNumber
-	} else {
-		return ""
-	}
-}
+// 			if (strings.Contains(currSerialNumber, "*") &&
+// 				glob.Glob(currSerialNumber, serialNumber)) ||
+// 				currSerialNumber == serialNumber {
+// 				valid = true
+// 				break
+// 			}
+// 		}
+// 	}
+// 	if !valid {
+// 		return serialNumber
+// 	} else {
+// 		return ""
+// 	}
+// }
 
 // func generateCert(ctx context.Context,
 // 	b *backend,
@@ -810,15 +804,15 @@ func validateSerialNumber(data *inputBundle, serialNumber string) string {
 //      type-id    OBJECT IDENTIFIER,
 //      value      [0] EXPLICIT ANY DEFINED BY type-id }
 
-type otherNameRaw struct {
-	TypeID asn1.ObjectIdentifier
-	Value  asn1.RawValue
-}
+// type otherNameRaw struct {
+// 	TypeID asn1.ObjectIdentifier
+// 	Value  asn1.RawValue
+// }
 
-type otherNameUtf8 struct {
-	oid   string
-	value string
-}
+// type otherNameUtf8 struct {
+// 	oid   string
+// 	value string
+// }
 
 // ExtractUTF8String returns the UTF8 string contained in the Value, or an error
 // if none is present.
@@ -1414,13 +1408,13 @@ type otherNameUtf8 struct {
 
 // Note: Taken from the Go source code since it's not public, and used in the
 // modified function below (which also uses these consts upstream)
-const (
-	nameTypeOther = 0
-	nameTypeEmail = 1
-	nameTypeDNS   = 2
-	nameTypeURI   = 6
-	nameTypeIP    = 7
-)
+// const (
+// 	nameTypeOther = 0
+// 	nameTypeEmail = 1
+// 	nameTypeDNS   = 2
+// 	nameTypeURI   = 6
+// 	nameTypeIP    = 7
+// )
 
 // Note: Taken from the Go source code since it's not public, plus changed to not marshal
 // marshalSANs marshals a list of addresses into a the contents of an X.509

@@ -2,7 +2,6 @@ package keyfactor
 
 import (
 	"context"
-	"crypto/x509"
 	"fmt"
 	"strings"
 	"time"
@@ -645,84 +644,84 @@ func (b *backend) pathRoleCreate(ctx context.Context, req *logical.Request, data
 	return nil, nil
 }
 
-func parseKeyUsages(input []string) int {
-	var parsedKeyUsages x509.KeyUsage
-	for _, k := range input {
-		switch strings.ToLower(strings.TrimSpace(k)) {
-		case "digitalsignature":
-			parsedKeyUsages |= x509.KeyUsageDigitalSignature
-		case "contentcommitment":
-			parsedKeyUsages |= x509.KeyUsageContentCommitment
-		case "keyencipherment":
-			parsedKeyUsages |= x509.KeyUsageKeyEncipherment
-		case "dataencipherment":
-			parsedKeyUsages |= x509.KeyUsageDataEncipherment
-		case "keyagreement":
-			parsedKeyUsages |= x509.KeyUsageKeyAgreement
-		case "certsign":
-			parsedKeyUsages |= x509.KeyUsageCertSign
-		case "crlsign":
-			parsedKeyUsages |= x509.KeyUsageCRLSign
-		case "encipheronly":
-			parsedKeyUsages |= x509.KeyUsageEncipherOnly
-		case "decipheronly":
-			parsedKeyUsages |= x509.KeyUsageDecipherOnly
-		}
-	}
+// func parseKeyUsages(input []string) int {
+// 	var parsedKeyUsages x509.KeyUsage
+// 	for _, k := range input {
+// 		switch strings.ToLower(strings.TrimSpace(k)) {
+// 		case "digitalsignature":
+// 			parsedKeyUsages |= x509.KeyUsageDigitalSignature
+// 		case "contentcommitment":
+// 			parsedKeyUsages |= x509.KeyUsageContentCommitment
+// 		case "keyencipherment":
+// 			parsedKeyUsages |= x509.KeyUsageKeyEncipherment
+// 		case "dataencipherment":
+// 			parsedKeyUsages |= x509.KeyUsageDataEncipherment
+// 		case "keyagreement":
+// 			parsedKeyUsages |= x509.KeyUsageKeyAgreement
+// 		case "certsign":
+// 			parsedKeyUsages |= x509.KeyUsageCertSign
+// 		case "crlsign":
+// 			parsedKeyUsages |= x509.KeyUsageCRLSign
+// 		case "encipheronly":
+// 			parsedKeyUsages |= x509.KeyUsageEncipherOnly
+// 		case "decipheronly":
+// 			parsedKeyUsages |= x509.KeyUsageDecipherOnly
+// 		}
+// 	}
 
-	return int(parsedKeyUsages)
-}
+// 	return int(parsedKeyUsages)
+// }
 
-func parseExtKeyUsages(role *roleEntry) certutil.CertExtKeyUsage {
-	var parsedKeyUsages certutil.CertExtKeyUsage
+// func parseExtKeyUsages(role *roleEntry) certutil.CertExtKeyUsage {
+// 	var parsedKeyUsages certutil.CertExtKeyUsage
 
-	if role.ServerFlag {
-		parsedKeyUsages |= certutil.ServerAuthExtKeyUsage
-	}
+// 	if role.ServerFlag {
+// 		parsedKeyUsages |= certutil.ServerAuthExtKeyUsage
+// 	}
 
-	if role.ClientFlag {
-		parsedKeyUsages |= certutil.ClientAuthExtKeyUsage
-	}
+// 	if role.ClientFlag {
+// 		parsedKeyUsages |= certutil.ClientAuthExtKeyUsage
+// 	}
 
-	if role.CodeSigningFlag {
-		parsedKeyUsages |= certutil.CodeSigningExtKeyUsage
-	}
+// 	if role.CodeSigningFlag {
+// 		parsedKeyUsages |= certutil.CodeSigningExtKeyUsage
+// 	}
 
-	if role.EmailProtectionFlag {
-		parsedKeyUsages |= certutil.EmailProtectionExtKeyUsage
-	}
+// 	if role.EmailProtectionFlag {
+// 		parsedKeyUsages |= certutil.EmailProtectionExtKeyUsage
+// 	}
 
-	for _, k := range role.ExtKeyUsage {
-		switch strings.ToLower(strings.TrimSpace(k)) {
-		case "any":
-			parsedKeyUsages |= certutil.AnyExtKeyUsage
-		case "serverauth":
-			parsedKeyUsages |= certutil.ServerAuthExtKeyUsage
-		case "clientauth":
-			parsedKeyUsages |= certutil.ClientAuthExtKeyUsage
-		case "codesigning":
-			parsedKeyUsages |= certutil.CodeSigningExtKeyUsage
-		case "emailprotection":
-			parsedKeyUsages |= certutil.EmailProtectionExtKeyUsage
-		case "ipsecendsystem":
-			parsedKeyUsages |= certutil.IpsecEndSystemExtKeyUsage
-		case "ipsectunnel":
-			parsedKeyUsages |= certutil.IpsecTunnelExtKeyUsage
-		case "ipsecuser":
-			parsedKeyUsages |= certutil.IpsecUserExtKeyUsage
-		case "timestamping":
-			parsedKeyUsages |= certutil.TimeStampingExtKeyUsage
-		case "ocspsigning":
-			parsedKeyUsages |= certutil.OcspSigningExtKeyUsage
-		case "microsoftservergatedcrypto":
-			parsedKeyUsages |= certutil.MicrosoftServerGatedCryptoExtKeyUsage
-		case "netscapeservergatedcrypto":
-			parsedKeyUsages |= certutil.NetscapeServerGatedCryptoExtKeyUsage
-		}
-	}
+// 	for _, k := range role.ExtKeyUsage {
+// 		switch strings.ToLower(strings.TrimSpace(k)) {
+// 		case "any":
+// 			parsedKeyUsages |= certutil.AnyExtKeyUsage
+// 		case "serverauth":
+// 			parsedKeyUsages |= certutil.ServerAuthExtKeyUsage
+// 		case "clientauth":
+// 			parsedKeyUsages |= certutil.ClientAuthExtKeyUsage
+// 		case "codesigning":
+// 			parsedKeyUsages |= certutil.CodeSigningExtKeyUsage
+// 		case "emailprotection":
+// 			parsedKeyUsages |= certutil.EmailProtectionExtKeyUsage
+// 		case "ipsecendsystem":
+// 			parsedKeyUsages |= certutil.IpsecEndSystemExtKeyUsage
+// 		case "ipsectunnel":
+// 			parsedKeyUsages |= certutil.IpsecTunnelExtKeyUsage
+// 		case "ipsecuser":
+// 			parsedKeyUsages |= certutil.IpsecUserExtKeyUsage
+// 		case "timestamping":
+// 			parsedKeyUsages |= certutil.TimeStampingExtKeyUsage
+// 		case "ocspsigning":
+// 			parsedKeyUsages |= certutil.OcspSigningExtKeyUsage
+// 		case "microsoftservergatedcrypto":
+// 			parsedKeyUsages |= certutil.MicrosoftServerGatedCryptoExtKeyUsage
+// 		case "netscapeservergatedcrypto":
+// 			parsedKeyUsages |= certutil.NetscapeServerGatedCryptoExtKeyUsage
+// 		}
+// 	}
 
-	return parsedKeyUsages
-}
+// 	return parsedKeyUsages
+// }
 
 type roleEntry struct {
 	LeaseMax                      string        `json:"lease_max"`
