@@ -2,6 +2,8 @@ GOARCH = amd64
 
 UNAME = $(shell uname -s)
 
+OS = linux
+
 ifndef OS
 	ifeq ($(UNAME), Linux)
 		OS = linux
@@ -15,16 +17,16 @@ endif
 all: fmt build start
 
 build:
-	GOOS=$(OS) GOARCH="$(GOARCH)" go build -o vault/plugins/mock cmd/mock/main.go
+	GOOS=$(OS) GOARCH="$(GOARCH)" go build -o vault/plugins/keyfactor cmd/keyfactor/main.go
 
 start:
-	vault server -dev -dev-root-token-id=root -dev-plugin-dir=./vault/plugins
+	vault server -dev -dev-root-token-id=root -dev-plugin-dir=/vault/plugins
 
 enable:
-	vault secrets enable mock
+	vault secrets enable keyfactor
 
 clean:
-	rm -f ./vault/plugins/mock
+	rm -f ./vault/plugins/keyfactor
 
 fmt:
 	go fmt $$(go list ./...)
