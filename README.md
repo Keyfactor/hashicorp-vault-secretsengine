@@ -264,7 +264,7 @@ If you are running Hashicorp Vault as a service with system, it may be necessary
 
 This line should look something like this:
 
-`ExecStartPre=/bin/bash export KF_CONF_PATH='/usr/bin/keyfactor/config.json'`
+`ExecStartPre=/bin/bash -c export KF_CONF_PATH='/usr/bin/keyfactor/config.json'`
 
 ### Install and register the plugin
 
