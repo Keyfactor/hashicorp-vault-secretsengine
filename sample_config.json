@@ -1,0 +1,7 @@
+{
+    "host":"xxx.xxx.xxx",
+    "creds":"S0VZRkFDVE9SXEFkbWluaXN0cmF0b3I6UGFzc3dvcmQx",
+    "template":"HashiCorpVaultServer",
+    "protocol":"https",
+    "CA":"kftrain.keyfactor.lab\\\\keyfactor-KFTRAIN-CA"
+  }
