@@ -243,11 +243,11 @@ Keyfactor, and the user account specified in the CREDS parameter must have READ 
 
 Once the config file is created, it is necessary to set the appropriate environment variables so that the Keyfactor plugin is able to locate the config file. To do this, set a system variable for KF_CONF_PATH that points to the location of the config file. The method to accomplish this will vary based on your system configuration.
 
-> Set environment variables in linux with the following command:
+> Set environment variables in Linux with the following command:
 >
 > `export <variable name>='<value>'`
 >
-> in windows:
+> in Windows:
 >
 > `$env:<variable name>="<value>"`
 
@@ -260,7 +260,7 @@ example:
 You may also be able to add this into your environment file or rc.local startup process based on your linux
 distribution.
 
-If you are running Hashicorp Vault as a service with system, it may be necessary to add a line in the vault service config file so that this variable is set prior to Vault startup. 
+If you are running Hashicorp Vault as a service with system, it may be necessary to add a line in the vault service config file so that this variable is set prior to Vault startup.
 
 This line should look something like this:
 
@@ -488,7 +488,7 @@ The following commands are supported by the Keyfactor Hashicorp Vault Secrets En
 
 ### Revoke certificate
 
-`vault write keyfactor/revoke/<serial number> serial=<serial>`
+`vault write keyfactor/revoke serial=<serial>`
 
 ### Sign CSR
 
