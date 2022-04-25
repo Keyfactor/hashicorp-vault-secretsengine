@@ -164,7 +164,13 @@ func getCAId(ctx context.Context, req *logical.Request, b *backend) (string, err
 	ca := config["CA"]
 	creds := config["creds"]
 	b.Logger().Debug("ca from config = " + ca)
-	ca_name := strings.Split(ca, "\\\\")[1]
+
+	if ca == "" {
+		b.Logger().Error("unable to read CA value from config file")
+		return "", nil
+	}
+
+	ca_name := strings.Split(ca, `\\`)[1]
 
 	// This is only needed when running as a vault extension
 	b.Logger().Debug("Closing idle connections")

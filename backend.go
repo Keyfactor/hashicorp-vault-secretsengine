@@ -29,15 +29,12 @@ var config map[string]string
 // Factory configures and returns backend
 func Factory(ctx context.Context, conf *logical.BackendConfig) (logical.Backend, error) {
 	confPath := os.Getenv("KF_CONF_PATH")
+
 	file, _ := ioutil.ReadFile(confPath)
 	config = make(map[string]string)
-	//roles = make(map[string]map[string]bool)
 	jsonutil.DecodeJSON(file, &config)
+
 	var b backend
-	// b := &backend{
-	// 	store:       make(map[string][]byte),
-	// 	crlLifetime: time.Hour * 72,
-	// }
 
 	b.Backend = &framework.Backend{
 		Help:        strings.TrimSpace(keyfactorHelp),
@@ -60,6 +57,8 @@ func Factory(ctx context.Context, conf *logical.BackendConfig) (logical.Backend,
 	}
 
 	b.Backend.Setup(ctx, conf)
+	b.Logger().Debug("KF_CONF_PATH = " + confPath)
+	b.Logger().Debug("config file contents = ", config)
 	return b, nil
 }
 

@@ -11,16 +11,14 @@ import (
 
 func pathRevoke(b *backend) *framework.Path {
 	return &framework.Path{
-		Pattern: `revoke/(?P<serial>[0-9A-Fa-f-:]+)`,
+		Pattern: `revoke/?$`,
+
 		Fields: map[string]*framework.FieldSchema{
 			"serial": {
-				Type: framework.TypeString,
-				Description: `Certificate serial number, in colon- or
-hyphen-separated octal`,
-				Required: true,
+				Type:        framework.TypeString,
+				Description: `The cerial number of the certificate to revoke`,
 			},
 		},
-
 		Callbacks: map[logical.Operation]framework.OperationFunc{
 			logical.UpdateOperation: b.pathRevokeWrite,
 			logical.CreateOperation: b.pathRevokeWrite,
@@ -32,7 +30,11 @@ hyphen-separated octal`,
 }
 
 func (b *backend) pathRevokeWrite(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+	//path := data.Get("path").(string)
+	//b.Logger().Debug("path = " + path)
+
 	serial := data.Get("serial").(string)
+	b.Logger().Debug("serial = " + serial)
 
 	if len(serial) == 0 {
 		return logical.ErrorResponse("The serial number must be provided"), nil
