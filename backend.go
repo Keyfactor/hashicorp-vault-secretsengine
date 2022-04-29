@@ -28,11 +28,6 @@ var config map[string]string
 
 // Factory configures and returns backend
 func Factory(ctx context.Context, conf *logical.BackendConfig) (logical.Backend, error) {
-	confPath := os.Getenv("KF_CONF_PATH")
-
-	file, _ := ioutil.ReadFile(confPath)
-	config = make(map[string]string)
-	jsonutil.DecodeJSON(file, &config)
 
 	var b backend
 
@@ -50,6 +45,7 @@ func Factory(ctx context.Context, conf *logical.BackendConfig) (logical.Backend,
 			pathIssue(&b),
 			pathSign(&b),
 		},
+		InitializeFunc: b.initialize,
 	}
 
 	if conf == nil {
@@ -57,14 +53,28 @@ func Factory(ctx context.Context, conf *logical.BackendConfig) (logical.Backend,
 	}
 
 	b.Backend.Setup(ctx, conf)
-	b.Logger().Debug("KF_CONF_PATH = " + confPath)
-	b.Logger().Debug("config file contents = ", config)
 	return b, nil
 }
 
 // Store certificates by serial number
 type backend struct {
 	*framework.Backend
+}
+
+func (b *backend) initialize(ctx context.Context, req *logical.InitializationRequest) error {
+	err := req.Storage.Delete(ctx, "/ca")
+
+	if err != nil {
+		b.Logger().Error("Error removing previous stored ca values on init")
+		return err
+	}
+	confPath := os.Getenv("KF_CONF_PATH")
+	file, _ := ioutil.ReadFile(confPath)
+	config = make(map[string]string)
+	jsonutil.DecodeJSON(file, &config)
+	b.Logger().Debug("INITIALIZE: KF_CONF_PATH = " + confPath)
+	b.Logger().Debug("config file contents = ", config)
+	return nil
 }
 
 // Generate keypair and CSR
@@ -93,11 +103,19 @@ func (b *backend) generateCSR(cn string, ip_sans []string, dns_sans []string) (s
 }
 
 // Handle interface with Keyfactor API to enroll a certificate with given content
-func (b *backend) submitCSR(ctx context.Context, req *logical.Request, csr string) ([]string, string, error) {
+func (b *backend) submitCSR(ctx context.Context, req *logical.Request, csr string, caName string, templateName string) ([]string, string, error) {
 	host := config["host"]
 	template := config["template"]
 	ca := config["CA"]
 	creds := config["creds"]
+
+	if caName != "" {
+		ca = caName
+	}
+
+	if templateName != "" {
+		template = templateName
+	}
 
 	location, _ := time.LoadLocation("UTC")
 	t := time.Now().In(location)
@@ -126,12 +144,14 @@ func (b *backend) submitCSR(ctx context.Context, req *logical.Request, csr strin
 	b.Logger().Debug("About to connect to " + config["host"] + "for csr submission")
 	res, err := http.DefaultClient.Do(httpReq)
 	if err != nil {
-		b.Logger().Info("Enrollment failed: {{err}}", err)
+		b.Logger().Info("CSR Enrollment failed: {{err}}", err)
 		return nil, "", err
 	}
 	if res.StatusCode != 200 {
-		b.Logger().Error("Enrollment failed: server returned" + fmt.Sprint(res.StatusCode))
-		b.Logger().Error("Error response = " + fmt.Sprint(res.Body))
+		b.Logger().Error("CSR Enrollment failed: server returned" + fmt.Sprint(res.StatusCode))
+		defer res.Body.Close()
+		body, _ := ioutil.ReadAll(res.Body)
+		b.Logger().Error("Error response: " + fmt.Sprint(body))
 		return nil, "", fmt.Errorf("enrollment failed: server returned  %d\n ", res.StatusCode)
 	}
 

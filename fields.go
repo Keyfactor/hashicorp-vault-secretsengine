@@ -2,82 +2,25 @@ package keyfactor
 
 import "github.com/hashicorp/vault/sdk/framework"
 
-// addIssueAndSignCommonFields adds fields common to both CA and non-CA issuing
-// and signing
-func addIssueAndSignCommonFields(fields map[string]*framework.FieldSchema) map[string]*framework.FieldSchema {
-	fields["exclude_cn_from_sans"] = &framework.FieldSchema{
-		Type:    framework.TypeBool,
-		Default: false,
-		Description: `If true, the Common Name will not be
-included in DNS or Email Subject Alternate Names.
-Defaults to false (CN is included).`,
-		DisplayAttrs: &framework.DisplayAttributes{
-			Name: "Exclude Common Name from Subject Alternative Names (SANs)",
-		},
-	}
-
-	fields["format"] = &framework.FieldSchema{
-		Type:    framework.TypeString,
-		Default: "pem",
-		Description: `Format for returned data. Can be "pem", "der",
-or "pem_bundle". If "pem_bundle" any private
-key and issuing cert will be appended to the
-certificate pem. Defaults to "pem".`,
-		AllowedValues: []interface{}{"pem", "der", "pem_bundle"},
-		DisplayAttrs: &framework.DisplayAttributes{
-			Value: "pem",
-		},
-	}
-
-	fields["private_key_format"] = &framework.FieldSchema{
-		Type:    framework.TypeString,
-		Default: "der",
-		Description: `Format for the returned private key.
-Generally the default will be controlled by the "format"
-parameter as either base64-encoded DER or PEM-encoded DER.
-However, this can be set to "pkcs8" to have the returned
-private key contain base64-encoded pkcs8 or PEM-encoded
-pkcs8 instead. Defaults to "der".`,
-		AllowedValues: []interface{}{"", "der", "pem", "pkcs8"},
-		DisplayAttrs: &framework.DisplayAttributes{
-			Value: "der",
-		},
-	}
-
-	fields["ip_sans"] = &framework.FieldSchema{
-		Type: framework.TypeCommaStringSlice,
-		Description: `The requested IP SANs, if any, in a
-comma-delimited list`,
-		DisplayAttrs: &framework.DisplayAttributes{
-			Name: "IP Subject Alternative Names (SANs)",
-		},
-	}
-
-	fields["uri_sans"] = &framework.FieldSchema{
-		Type: framework.TypeCommaStringSlice,
-		Description: `The requested URI SANs, if any, in a
-comma-delimited list.`,
-		DisplayAttrs: &framework.DisplayAttributes{
-			Name: "URI Subject Alternative Names (SANs)",
-		},
-	}
-
-	fields["other_sans"] = &framework.FieldSchema{
-		Type: framework.TypeCommaStringSlice,
-		Description: `Requested other SANs, in an array with the format
-<oid>;UTF8:<utf8 string value> for each entry.`,
-		DisplayAttrs: &framework.DisplayAttributes{
-			Name: "Other SANs",
-		},
-	}
-
-	return fields
-}
-
 // addNonCACommonFields adds fields with help text specific to non-CA
 // certificate issuing and signing
 func addNonCACommonFields(fields map[string]*framework.FieldSchema) map[string]*framework.FieldSchema {
-	fields = addIssueAndSignCommonFields(fields)
+
+	fields["ca"] = &framework.FieldSchema{
+		Type:        framework.TypeString,
+		Description: `Specify the CA to use for the request in the format "<host\\logical>". If blank, will use the default from configuration.`,
+	}
+
+	fields["template"] = &framework.FieldSchema{
+		Type:        framework.TypeString,
+		Description: `Specify the name of the certificate template to use for the request. If blank, will use the default from configuration.`,
+	}
+
+	fields["dns_sans"] = &framework.FieldSchema{
+		Type:        framework.TypeString,
+		Description: `Comma seperated list of DNS Subject Alternative Names`,
+		Required:    true,
+	}
 
 	fields["role"] = &framework.FieldSchema{
 		Type: framework.TypeString,
@@ -91,6 +34,7 @@ request`,
 one, specify the alternative names in the
 alt_names map. If email protection is enabled
 in the role, this may be an email address.`,
+		Required: true,
 	}
 
 	fields["alt_names"] = &framework.FieldSchema{
