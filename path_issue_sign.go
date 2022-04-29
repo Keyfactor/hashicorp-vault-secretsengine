@@ -87,7 +87,13 @@ func (b *backend) pathSign(ctx context.Context, req *logical.Request, data *fram
 		return logical.ErrorResponse(fmt.Sprintf("unknown role: %s", roleName)), nil
 	}
 
-	certs, serial, errr := b.submitCSR(ctx, req, csr)
+	caName := data.Get("ca").(string)
+	templateName := data.Get("template").(string)
+
+	b.Logger().Debug("CA Name parameter = " + caName)
+	b.Logger().Debug("Template name parameter = " + templateName)
+
+	certs, serial, errr := b.submitCSR(ctx, req, csr, caName, templateName)
 
 	if errr != nil {
 		return nil, fmt.Errorf("could not sign csr: %s", errr)
@@ -109,36 +115,63 @@ func (b *backend) pathIssueSignCert(ctx context.Context, req *logical.Request, d
 		return nil, logical.ErrReadOnly
 	}
 
-	arg, _ := json.Marshal(req.Data)
-	b.Logger().Debug(string(arg))
-	cn := ""
 	var ip_sans []string
 	var dns_sans []string
 
-	// Get and validate subject info from Vault command
-	for k, v := range req.Data {
-		if k == "common_name" {
-			cn = v.(string)
-		}
-		if k == "ip_sans" { // TODO - type switch
-			ip_sans = strings.Split(v.(string), ",")
-		}
-		if k == "dns_sans" { // TODO - type switch
-			dns_sans = strings.Split(v.(string), ",")
-		}
+	arg, _ := json.Marshal(req.Data)
+	b.Logger().Debug(string(arg))
+
+	// get common name
+	cn, ok := data.GetOk("common_name")
+
+	if !ok {
+		return nil, fmt.Errorf("common_name must be provided to issue certificate")
 	}
+
+	cn = cn.(string)
 
 	if cn == "" {
 		return nil, fmt.Errorf("common_name must be provided to issue certificate")
 	}
 
-	var err_resp error
+	// get dns sans (required)
+	dns_sans_string, ok := data.GetOk("dns_sans")
 
-	if strings.Contains(cn, role.AllowedBaseDomain) && !role.AllowSubdomains {
-		err_resp = fmt.Errorf("sub-domains not allowed for role")
+	if !ok {
+		return nil, fmt.Errorf("dns_sans must be provided to issue certificate")
 	}
 
-	if role.AllowedBaseDomain == cn {
+	dns_sans_string = dns_sans_string.(string)
+
+	if dns_sans_string == "" {
+		return nil, fmt.Errorf("dns_sans must be provided to issue certificate")
+	}
+
+	dns_sans = strings.Split(dns_sans_string.(string), ",")
+
+	if len(dns_sans) == 0 {
+		return nil, fmt.Errorf("dns_sans must be provided to issue certificate")
+	}
+
+	// get ip sans (optional)
+	ip_sans_string, ok := data.GetOk("ip_sans")
+	if ok {
+		ip_sans = strings.Split(ip_sans_string.(string), ",")
+	}
+
+	caName := data.Get("ca").(string)
+
+	templateName := data.Get("template").(string)
+
+	b.Logger().Debug("CA Name parameter = " + caName)
+	b.Logger().Debug("Template name parameter = " + templateName)
+
+	//check role permissions
+	var err_resp error
+	if strings.Contains(cn.(string), role.AllowedBaseDomain) && !role.AllowSubdomains {
+		err_resp = fmt.Errorf("sub-domains not allowed for role")
+	}
+	if role.AllowedBaseDomain == cn.(string) {
 		err_resp = fmt.Errorf("common name not allowed for provided role")
 	}
 
@@ -152,8 +185,9 @@ func (b *backend) pathIssueSignCert(ctx context.Context, req *logical.Request, d
 		}
 	}
 
-	csr, key := b.generateCSR(cn, ip_sans, dns_sans)
-	certs, serial, errr := b.submitCSR(ctx, req, csr)
+	//generate and submit CSR
+	csr, key := b.generateCSR(cn.(string), ip_sans, dns_sans)
+	certs, serial, errr := b.submitCSR(ctx, req, csr, caName, templateName)
 
 	if errr != nil {
 		return nil, fmt.Errorf("could not enroll certificate: %s", errr)

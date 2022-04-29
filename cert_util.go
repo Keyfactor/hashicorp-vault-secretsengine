@@ -61,7 +61,7 @@ func fetchCAInfo(ctx context.Context, req *logical.Request, b *backend) (respons
 	if caEntry != nil {
 		var r map[string]interface{}
 		json.Unmarshal(caEntry.Value, &r)
-		b.Logger().Debug("caEntry.Value = ", r)
+		b.Logger().Debug("stored ca = ", r)
 
 		resp := &logical.Response{
 			Data: r,
@@ -268,6 +268,7 @@ func fetchCertFromKeyfactor(ctx context.Context, req *logical.Request, b *backen
 
 	// Read response and return certificate and key
 	defer res.Body.Close()
+
 	body, err := ioutil.ReadAll(res.Body)
 	if err != nil {
 		b.Logger().Info("Error reading response: {{err}}", err)
