@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -69,7 +70,7 @@ func fetchCAInfo(ctx context.Context, req *logical.Request, b *backend) (respons
 		return resp, nil
 	}
 
-	// if not we search certs for 'CA -eq "keyfactor-KFTRAIN-CA" AND CertState -eq "6"'
+	// if not we search certs for 'CA -eq "<ca_name>" AND CertState -eq "6"'
 	//
 
 	caId, err := getCAId(ctx, req, b)
@@ -175,6 +176,8 @@ func getCAId(ctx context.Context, req *logical.Request, b *backend) (string, err
 	// This is only needed when running as a vault extension
 	b.Logger().Debug("Closing idle connections")
 	http.DefaultClient.CloseIdleConnections()
+
+	ca_name = url.QueryEscape(ca_name)
 
 	// Build request
 	url := config["protocol"] + "://" + host + "/KeyfactorAPI/Certificates?pq.queryString=CA%20-eq%20%22" + ca_name + "%22%20AND%20CertState%20-eq%20%226%22" // CertState 6 = cert
