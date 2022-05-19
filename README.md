@@ -209,6 +209,8 @@ The credential string to be encoded should be in the format of: `Domain\Username
 
 ### Build the Keyfactor config file
 
+*Note: The current version of this plugin stores configuration in a text file. Future plans include moving the configuration to the built in Vault configuration store*
+
 The Keyfactor plugin requires a configuration file to be built to store the parameters for the connection to Keyfactor. This file is in a standard JSON format on the Hashicorp server. The file can be stored anywhere, but is typically in a location such as: `/usr/bin/keyfactor/config.json`
 
 Based on the values below, create the config file and save it into a location on the Vault server.
