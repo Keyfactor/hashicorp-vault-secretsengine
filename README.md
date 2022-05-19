@@ -119,7 +119,7 @@ It is now necessary to take the certificate template that you created and publis
 **To publish the template**:
 
 1. Open the Certificate Authority MMC console
-1. Right on Certificate Templates in the left hand pane and select NEW – Certificate Template to Issue
+1. Right-click on Certificate Templates in the left hand pane and select NEW – Certificate Template to Issue
 !["template6"](images/template6.png)
 
 1. Select the template that was created in the previous step, and then click OK.
