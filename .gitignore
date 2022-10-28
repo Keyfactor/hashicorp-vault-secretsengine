@@ -1,4 +1,4 @@
 .vs/*
-vaultSecretsEngine-update.zip
+**/*.zip
 vault/plugins/*
-.vscode/templates/go.lict
+.vscode/**/*
