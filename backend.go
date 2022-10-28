@@ -78,10 +78,16 @@ func (b *backend) initialize(ctx context.Context, req *logical.InitializationReq
 }
 
 // Generate keypair and CSR
-func (b *backend) generateCSR(cn string, ip_sans []string, dns_sans []string) (string, []byte) {
+func (b *backend) generateCSR(cn string, ip_sans []string, dns_sans []string, o []string, ou []string, l []string, p []string, c []string, zip []string) (string, []byte) {
 	keyBytes, _ := rsa.GenerateKey(rand.Reader, 2048)
 	subj := pkix.Name{
-		CommonName: cn,
+		Country:            c,
+		Organization:       o,
+		OrganizationalUnit: ou,
+		Locality:           l,
+		Province:           p,
+		CommonName:         cn,
+		PostalCode:         zip,
 	}
 	rawSubj := subj.ToRDNSequence()
 	asn1Subj, _ := asn1.Marshal(rawSubj)
