@@ -184,9 +184,38 @@ func (b *backend) pathIssueSignCert(ctx context.Context, req *logical.Request, d
 			return nil, fmt.Errorf("Subject Alternative Name " + dns_sans[u] + " not allowed for provided role")
 		}
 	}
+	ou, ok := data.GetOk("ou")
+	if !ok {
+		ou = role.OU
+	}
+
+	o, ok := data.GetOk("o")
+	if !ok {
+		o = role.Organization
+	}
+
+	c, ok := data.GetOk("c")
+	if !ok {
+		c = role.Country
+	}
+
+	l, ok := data.GetOk("l")
+	if !ok {
+		l = role.Locality
+	}
+
+	p, ok := data.GetOk("p")
+	if !ok {
+		p = role.Province
+	}
+
+	z, ok := data.GetOk("z")
+	if !ok {
+		z = role.PostalCode
+	}
 
 	//generate and submit CSR
-	csr, key := b.generateCSR(cn.(string), ip_sans, dns_sans)
+	csr, key := b.generateCSR(cn.(string), ip_sans, dns_sans, o.([]string), ou.([]string), l.([]string), p.([]string), c.([]string), z.([]string))
 	certs, serial, errr := b.submitCSR(ctx, req, csr, caName, templateName)
 
 	if errr != nil {
@@ -217,6 +246,8 @@ const pathIssueHelpDesc = `
 This path allows requesting a certificate to be issued according to the
 policy of the given role. The certificate will only be issued if the
 requested details are allowed by the role policy.
+
+The values for C, O, OU, L, S, P (province) and zip (postal code) will be retreived from the role if not supplied as parameters.
 
 This path returns a certificate and a private key. If you want a workflow
 that does not expose a private key, generate a CSR locally and use the

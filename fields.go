@@ -67,6 +67,48 @@ be larger than the role max TTL.`,
 		},
 	}
 
+	// fields["email"] = &framework.FieldSchema{
+	// 	Type: framework.TypeCommaStringSlice,
+	// 	Description: `Email address to be associated with the certificate`,
+	// 	Required:    false,
+	// }
+
+	fields["c"] = &framework.FieldSchema{
+		Type:        framework.TypeCommaStringSlice,
+		Description: `Country for the certificate.  If omitted, the value associated with the role is used.`,
+		Required:    false,
+	}
+
+	fields["ou"] = &framework.FieldSchema{
+		Type:        framework.TypeCommaStringSlice,
+		Description: `Organizational Unit for the certificate.  If omitted, the value associated with the role is used.`,
+		Required:    false,
+	}
+
+	fields["o"] = &framework.FieldSchema{
+		Type:        framework.TypeCommaStringSlice,
+		Description: `Organization for the certificate.  If omitted, the value associated with the role is used.`,
+		Required:    false,
+	}
+
+	fields["l"] = &framework.FieldSchema{
+		Type:        framework.TypeCommaStringSlice,
+		Description: `Locality for the certificate.  If omitted, the value associated with the role is used.`,
+		Required:    false,
+	}
+
+	fields["p"] = &framework.FieldSchema{
+		Type:        framework.TypeCommaStringSlice,
+		Description: `Province for the certificate.  If omitted, the value associated with the role is used.`,
+		Required:    false,
+	}
+
+	fields["zip"] = &framework.FieldSchema{
+		Type:        framework.TypeCommaStringSlice,
+		Description: `Postal code for the certificate.  If omitted, the value associated with the role is used.`,
+		Required:    false,
+	}
+
 	return fields
 }
 
