@@ -12,7 +12,7 @@ import (
 )
 
 // Returns the CA in raw format
-func pathFetchCA(b *backend) *framework.Path {
+func pathFetchCA(b *keyfactorBackend) *framework.Path {
 	return &framework.Path{
 		Pattern: `ca(/pem)?`,
 
@@ -26,7 +26,7 @@ func pathFetchCA(b *backend) *framework.Path {
 }
 
 // Returns the CA chain
-func pathFetchCAChain(b *backend) *framework.Path {
+func pathFetchCAChain(b *keyfactorBackend) *framework.Path {
 	return &framework.Path{
 		Pattern: `ca_chain(/pem)?`,
 
@@ -55,7 +55,7 @@ func pathFetchCAChain(b *backend) *framework.Path {
 
 // Returns any valid (non-revoked) cert. Since "ca" fits the pattern, this path
 // also handles returning the CA cert in a non-raw format.
-func pathFetchValid(b *backend) *framework.Path {
+func pathFetchValid(b *keyfactorBackend) *framework.Path {
 	return &framework.Path{
 		Pattern: `cert/(?P<serial>[0-9A-Fa-f-:]+)`,
 		Fields: map[string]*framework.FieldSchema{
@@ -90,7 +90,7 @@ hyphen-separated octal`,
 // }
 
 // This returns the list of serial numbers for certs
-func pathFetchListCerts(b *backend) *framework.Path {
+func pathFetchListCerts(b *keyfactorBackend) *framework.Path {
 	return &framework.Path{
 		Pattern: "certs/?$",
 
@@ -103,7 +103,7 @@ func pathFetchListCerts(b *backend) *framework.Path {
 	}
 }
 
-func (b *backend) pathFetchCertList(ctx context.Context, req *logical.Request, data *framework.FieldData) (response *logical.Response, retErr error) {
+func (b *keyfactorBackend) pathFetchCertList(ctx context.Context, req *logical.Request, data *framework.FieldData) (response *logical.Response, retErr error) {
 	entries, err := req.Storage.List(ctx, "certs/")
 	if err != nil {
 		return nil, err
@@ -112,7 +112,7 @@ func (b *backend) pathFetchCertList(ctx context.Context, req *logical.Request, d
 	return logical.ListResponse(entries), nil
 }
 
-func (b *backend) pathFetchRead(ctx context.Context, req *logical.Request, data *framework.FieldData) (response *logical.Response, retErr error) {
+func (b *keyfactorBackend) pathFetchRead(ctx context.Context, req *logical.Request, data *framework.FieldData) (response *logical.Response, retErr error) {
 	var serial, pemType, contentType string
 	var certEntry, revokedEntry *logical.StorageEntry
 	var funcErr error

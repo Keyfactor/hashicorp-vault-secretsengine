@@ -52,8 +52,8 @@ import (
 // 	return format
 // }
 
-//fetch the CA info from keyfactor
-func fetchCAInfo(ctx context.Context, req *logical.Request, b *backend) (response *logical.Response, retErr error) {
+// fetch the CA info from keyfactor
+func fetchCAInfo(ctx context.Context, req *logical.Request, b *keyfactorBackend) (response *logical.Response, retErr error) {
 	// first we see if we have previously retreived the CA or chain
 	caEntry, err := req.Storage.Get(ctx, "ca")
 	if err != nil {
@@ -107,7 +107,7 @@ func fetchCAInfo(ctx context.Context, req *logical.Request, b *backend) (respons
 	return resp, nil
 }
 
-func fetchCaChainInfo(ctx context.Context, req *logical.Request, b *backend) (response *logical.Response, retErr error) {
+func fetchCaChainInfo(ctx context.Context, req *logical.Request, b *keyfactorBackend) (response *logical.Response, retErr error) {
 	// first we see if we have previously retreived the CA or chain
 	caEntry, err := req.Storage.Get(ctx, "ca_chain")
 	if err != nil {
@@ -160,7 +160,7 @@ func fetchCaChainInfo(ctx context.Context, req *logical.Request, b *backend) (re
 	return resp, nil
 }
 
-func getCAId(ctx context.Context, req *logical.Request, b *backend) (string, error) {
+func getCAId(ctx context.Context, req *logical.Request, b *keyfactorBackend) (string, error) {
 	host := config["host"]
 	ca := config["CA"]
 	creds := config["creds"]
@@ -223,7 +223,7 @@ func getCAId(ctx context.Context, req *logical.Request, b *backend) (string, err
 	return fmt.Sprintf("%d", r[0].ID), nil
 }
 
-func fetchCertFromKeyfactor(ctx context.Context, req *logical.Request, b *backend, kfCertId string, includeChain bool) (string, error) {
+func fetchCertFromKeyfactor(ctx context.Context, req *logical.Request, b *keyfactorBackend, kfCertId string, includeChain bool) (string, error) {
 	host := config["host"]
 	//template := config["template"]
 	//ca := config["CA"]

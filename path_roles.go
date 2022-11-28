@@ -15,7 +15,7 @@ import (
 	"github.com/hashicorp/vault/sdk/logical"
 )
 
-func pathListRoles(b *backend) *framework.Path {
+func pathListRoles(b *keyfactorBackend) *framework.Path {
 	return &framework.Path{
 		Pattern: "roles/?$",
 
@@ -28,7 +28,7 @@ func pathListRoles(b *backend) *framework.Path {
 	}
 }
 
-func pathRoles(b *backend) *framework.Path {
+func pathRoles(b *keyfactorBackend) *framework.Path {
 	return &framework.Path{
 		Pattern: "roles/" + framework.GenericNameRegex("name"),
 		Fields: map[string]*framework.FieldSchema{
@@ -383,7 +383,7 @@ for "generate_lease".`,
 	}
 }
 
-func (b *backend) getRole(ctx context.Context, s logical.Storage, n string) (*roleEntry, error) {
+func (b *keyfactorBackend) getRole(ctx context.Context, s logical.Storage, n string) (*roleEntry, error) {
 	entry, err := s.Get(ctx, "role/"+n)
 	if err != nil {
 		return nil, err
@@ -499,7 +499,7 @@ func (b *backend) getRole(ctx context.Context, s logical.Storage, n string) (*ro
 	return &result, nil
 }
 
-func (b *backend) pathRoleDelete(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+func (b *keyfactorBackend) pathRoleDelete(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 	err := req.Storage.Delete(ctx, "role/"+data.Get("name").(string))
 	if err != nil {
 		return nil, err
@@ -508,7 +508,7 @@ func (b *backend) pathRoleDelete(ctx context.Context, req *logical.Request, data
 	return nil, nil
 }
 
-func (b *backend) pathRoleRead(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+func (b *keyfactorBackend) pathRoleRead(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 	roleName := data.Get("name").(string)
 	if roleName == "" {
 		return logical.ErrorResponse("missing role name"), nil
@@ -528,7 +528,7 @@ func (b *backend) pathRoleRead(ctx context.Context, req *logical.Request, data *
 	return resp, nil
 }
 
-func (b *backend) pathRoleList(ctx context.Context, req *logical.Request, d *framework.FieldData) (*logical.Response, error) {
+func (b *keyfactorBackend) pathRoleList(ctx context.Context, req *logical.Request, d *framework.FieldData) (*logical.Response, error) {
 	entries, err := req.Storage.List(ctx, "role/")
 	if err != nil {
 		return nil, err
@@ -537,7 +537,7 @@ func (b *backend) pathRoleList(ctx context.Context, req *logical.Request, d *fra
 	return logical.ListResponse(entries), nil
 }
 
-func (b *backend) pathRoleCreate(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+func (b *keyfactorBackend) pathRoleCreate(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 	var err error
 	name := data.Get("name").(string)
 

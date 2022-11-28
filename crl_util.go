@@ -12,7 +12,7 @@ import (
 	"github.com/hashicorp/vault/sdk/logical"
 )
 
-//const kf_revoke_path = "/CMSAPI/Certificates/Revoke"
+// const kf_revoke_path = "/CMSAPI/Certificates/Revoke"
 const kf_revoke_path = "/KeyfactorAPI/Certificates/Revoke"
 
 type revocationInfo struct {
@@ -22,7 +22,7 @@ type revocationInfo struct {
 }
 
 // Revokes a cert, and tries to be smart about error recovery
-func revokeCert(ctx context.Context, b *backend, req *logical.Request, serial string, fromLease bool) (*logical.Response, error) {
+func revokeCert(ctx context.Context, b *keyfactorBackend, req *logical.Request, serial string, fromLease bool) (*logical.Response, error) {
 	// As this backend is self-contained and this function does not hook into
 	// third parties to manage users or resources, if the mount is tainted,
 	// revocation doesn't matter anyways -- the CRL that would be written will

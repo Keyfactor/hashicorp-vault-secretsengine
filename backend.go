@@ -16,8 +16,10 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/Keyfactor/keyfactor-go-client/api"
 	"github.com/hashicorp/errwrap"
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/helper/jsonutil"
@@ -29,24 +31,7 @@ var config map[string]string
 // Factory configures and returns backend
 func Factory(ctx context.Context, conf *logical.BackendConfig) (logical.Backend, error) {
 
-	var b backend
-
-	b.Backend = &framework.Backend{
-		Help:        strings.TrimSpace(keyfactorHelp),
-		BackendType: logical.TypeLogical,
-		Paths: []*framework.Path{
-			pathListRoles(&b),
-			pathRoles(&b),
-			pathFetchCA(&b),
-			pathFetchCAChain(&b),
-			pathFetchValid(&b),
-			pathFetchListCerts(&b),
-			pathRevoke(&b),
-			pathIssue(&b),
-			pathSign(&b),
-		},
-		InitializeFunc: b.initialize,
-	}
+	b := backend()
 
 	if conf == nil {
 		return nil, fmt.Errorf("configuration passed into backend is nil")
@@ -56,12 +41,37 @@ func Factory(ctx context.Context, conf *logical.BackendConfig) (logical.Backend,
 	return b, nil
 }
 
-// Store certificates by serial number
-type backend struct {
+// // Store certificates by serial number
+type keyfactorBackend struct {
 	*framework.Backend
+	lock sync.RWMutex
+	client *api.Client
 }
 
-func (b *backend) initialize(ctx context.Context, req *logical.InitializationRequest) error {
+// keyfactorBackend defines the target API keyfactorBackend
+// for Vault. It must include each path
+// and the secrets it will store.
+func backend() *keyfactorBackend {
+	var b = keyfactorBackend{}
+
+	b.Backend = &framework.Backend{
+		Help: strings.TrimSpace(keyfactorHelp),
+		PathsSpecial: &logical.Paths{
+			LocalStorage: []string{},
+			SealWrapStorage: []string{
+				"config",
+				"role/*",
+			},
+		},
+		Paths:       framework.PathAppend(),
+		Secrets:     []*framework.Secret{},
+		BackendType: logical.TypeLogical,
+		Invalidate:  b.invalidate,
+	}
+	return &b
+}
+
+func (b *keyfactorBackend) initialize(ctx context.Context, req *logical.InitializationRequest) error {
 	err := req.Storage.Delete(ctx, "/ca")
 
 	if err != nil {
@@ -78,7 +88,7 @@ func (b *backend) initialize(ctx context.Context, req *logical.InitializationReq
 }
 
 // Generate keypair and CSR
-func (b *backend) generateCSR(cn string, ip_sans []string, dns_sans []string) (string, []byte) {
+func (b *keyfactorBackend) generateCSR(cn string, ip_sans []string, dns_sans []string) (string, []byte) {
 	keyBytes, _ := rsa.GenerateKey(rand.Reader, 2048)
 	subj := pkix.Name{
 		CommonName: cn,
@@ -103,7 +113,7 @@ func (b *backend) generateCSR(cn string, ip_sans []string, dns_sans []string) (s
 }
 
 // Handle interface with Keyfactor API to enroll a certificate with given content
-func (b *backend) submitCSR(ctx context.Context, req *logical.Request, csr string, caName string, templateName string) ([]string, string, error) {
+func (b *keyfactorBackend) submitCSR(ctx context.Context, req *logical.Request, csr string, caName string, templateName string) ([]string, string, error) {
 	host := config["host"]
 	template := config["template"]
 	ca := config["CA"]
@@ -212,6 +222,40 @@ func (b *backend) submitCSR(ctx context.Context, req *logical.Request, csr strin
 
 	return certs, serial, nil
 }
+
+// reset clears any client configuration for a new
+// backend to be configured
+func (b *keyfactorBackend) reset() {
+	b.lock.Lock()
+	defer b.lock.Unlock()
+	//b.client = nil
+}
+
+// invalidate clears an existing client configuration in
+// the backend
+func (b *keyfactorBackend) invalidate(ctx context.Context, key string) {
+	if key == "config" {
+		b.reset()
+	}
+}
+
+// getClient locks the backend as it configures and creates a
+// a new client for the target API
+// func (b *keyfactorBackend) getClient(ctx context.Context, s logical.Storage) (*hashiCupsClient, error) {
+// 	b.lock.RLock()
+// 	unlockFunc := b.lock.RUnlock
+// 	defer func() { unlockFunc() }()
+
+// 	// if b.client != nil {
+// 	// 	return b.client, nil
+// 	// }
+
+// 	b.lock.RUnlock()
+// 	b.lock.Lock()
+// 	unlockFunc = b.lock.Unlock
+
+// 	return nil, fmt.Errorf("need to return client")
+// }
 
 const keyfactorHelp = `
 The Keyfactor backend is a pki service that issues and manages certificates.

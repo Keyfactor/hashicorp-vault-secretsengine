@@ -9,7 +9,7 @@ import (
 	"github.com/hashicorp/vault/sdk/logical"
 )
 
-func pathRevoke(b *backend) *framework.Path {
+func pathRevoke(b *keyfactorBackend) *framework.Path {
 	return &framework.Path{
 		Pattern: `revoke/?$`,
 
@@ -29,7 +29,7 @@ func pathRevoke(b *backend) *framework.Path {
 	}
 }
 
-func (b *backend) pathRevokeWrite(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+func (b *keyfactorBackend) pathRevokeWrite(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 	//path := data.Get("path").(string)
 	//b.Logger().Debug("path = " + path)
 

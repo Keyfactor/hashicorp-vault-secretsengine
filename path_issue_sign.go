@@ -12,7 +12,7 @@ import (
 	"github.com/hashicorp/vault/sdk/logical"
 )
 
-func pathIssue(b *backend) *framework.Path {
+func pathIssue(b *keyfactorBackend) *framework.Path {
 	ret := &framework.Path{
 		Pattern: "issue/" + framework.GenericNameRegex("role"),
 
@@ -28,7 +28,7 @@ func pathIssue(b *backend) *framework.Path {
 	return ret
 }
 
-func pathSign(b *backend) *framework.Path {
+func pathSign(b *keyfactorBackend) *framework.Path {
 	ret := &framework.Path{
 		Pattern: "sign/" + framework.GenericNameRegex("role"),
 
@@ -54,7 +54,7 @@ func pathSign(b *backend) *framework.Path {
 
 // pathIssue issues a certificate and private key from given parameters,
 // subject to role restrictions
-func (b *backend) pathIssue(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+func (b *keyfactorBackend) pathIssue(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 	roleName := data.Get("role").(string)
 
 	// Get the role
@@ -75,7 +75,7 @@ func (b *backend) pathIssue(ctx context.Context, req *logical.Request, data *fra
 
 // pathSign issues a certificate from a submitted CSR, subject to role
 // restrictions
-func (b *backend) pathSign(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+func (b *keyfactorBackend) pathSign(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 	roleName := data.Get("role").(string)
 	csr := data.Get("csr").(string)
 	// Get the role
@@ -109,7 +109,7 @@ func (b *backend) pathSign(ctx context.Context, req *logical.Request, data *fram
 	return response, nil
 }
 
-func (b *backend) pathIssueSignCert(ctx context.Context, req *logical.Request, data *framework.FieldData, role *roleEntry) (*logical.Response, error) {
+func (b *keyfactorBackend) pathIssueSignCert(ctx context.Context, req *logical.Request, data *framework.FieldData, role *roleEntry) (*logical.Response, error) {
 	// If storing the certificate and on a performance standby, forward this request on to the primary
 	if !role.NoStore && b.System().ReplicationState().HasState(consts.ReplicationPerformanceStandby) {
 		return nil, logical.ErrReadOnly
