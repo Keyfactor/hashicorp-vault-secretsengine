@@ -1,3 +1,4 @@
 .vs/*
 vaultSecretsEngine-update.zip
 vault/plugins/*
+*.exe
