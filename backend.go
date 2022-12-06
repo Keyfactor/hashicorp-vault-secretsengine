@@ -12,7 +12,6 @@ import (
 	"sync"
 	"time"
 
-	//"github.com/Keyfactor/keyfactor-go-client/api"
 	"github.com/hashicorp/errwrap"
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/logical"
@@ -35,7 +34,7 @@ type keyfactorBackend struct {
 	*framework.Backend
 	lock         sync.RWMutex
 	cachedConfig *keyfactorConfig
-	//client       *api.Client
+	client       *keyfactorClient
 }
 
 // keyfactorBackend defines the target API keyfactorBackend
@@ -66,21 +65,39 @@ func backend() *keyfactorBackend {
 	return &b
 }
 
-// func (b *keyfactorBackend) initialize(ctx context.Context, req *logical.InitializationRequest) error {
-// 	err := req.Storage.Delete(ctx, "/ca")
+// reset clears any client configuration for a new
+// backend to be configured
+func (b *keyfactorBackend) reset() {
+	b.lock.Lock()
+	defer b.lock.Unlock()
+	b.client = nil
+}
 
-// 	if err != nil {
-// 		b.Logger().Error("Error removing previous stored ca values on init")
-// 		return err
-// 	}
-// 	//confPath := os.Getenv("KF_CONF_PATH")
-// 	//file, _ := ioutil.ReadFile(confPath)
-// 	//config = make(map[string]string)
-// 	//jsonutil.DecodeJSON(file, &config)
-// 	//b.Logger().Debug("INITIALIZE: KF_CONF_PATH = " + confPath)
-// 	//b.Logger().Debug("config file contents = ", config)
-// 	return nil
-// }
+// invalidate clears an existing client configuration in
+// the backend
+func (b *keyfactorBackend) invalidate(ctx context.Context, key string) {
+	if key == "config" {
+		b.reset()
+	}
+}
+
+// getClient locks the backend as it configures and creates a
+// a new client for the target API
+func (b *keyfactorBackend) getClient(ctx context.Context, s logical.Storage) (*keyfactorClient, error) {
+	b.lock.RLock()
+	unlockFunc := b.lock.RUnlock
+	defer func() { unlockFunc() }()
+
+	if b.client != nil {
+		return b.client, nil
+	}
+
+	b.lock.RUnlock()
+	b.lock.Lock()
+	unlockFunc = b.lock.Unlock
+
+	return nil, fmt.Errorf("need to return client")
+}
 
 // Handle interface with Keyfactor API to enroll a certificate with given content
 func (b *keyfactorBackend) submitCSR(ctx context.Context, req *logical.Request, csr string, caName string, templateName string) ([]string, string, error) {
@@ -91,11 +108,6 @@ func (b *keyfactorBackend) submitCSR(ctx context.Context, req *logical.Request, 
 	if config == nil {
 		return nil, "", errors.New("configuration is empty.")
 	}
-
-	// host := config["host"]
-	// template := config["template"]
-	// ca := config["CA"]
-	// creds := config["creds"]
 
 	ca := config.CertAuthority
 	template := config.CertTemplate
@@ -130,14 +142,14 @@ func (b *keyfactorBackend) submitCSR(ctx context.Context, req *logical.Request, 
 	b.Logger().Debug("About to connect to " + config.KeyfactorUrl + "for csr submission")
 	res, err := http.DefaultClient.Do(httpReq)
 	if err != nil {
-		b.Logger().Info("CSR Enrollment failed: {{err}}", err)
+		b.Logger().Info("CSR Enrollment failed: {{err}}", err.Error())
 		return nil, "", err
 	}
 	if res.StatusCode != 200 {
 		b.Logger().Error("CSR Enrollment failed: server returned" + fmt.Sprint(res.StatusCode))
 		defer res.Body.Close()
 		body, _ := ioutil.ReadAll(res.Body)
-		b.Logger().Error("Error response: " + fmt.Sprint(body))
+		b.Logger().Error("Error response: " + string(body[:]))
 		return nil, "", fmt.Errorf("enrollment failed: server returned  %d\n ", res.StatusCode)
 	}
 
@@ -166,7 +178,7 @@ func (b *keyfactorBackend) submitCSR(ctx context.Context, req *logical.Request, 
 	kfId := inner["KeyfactorID"].(float64)
 
 	if err != nil {
-		b.Logger().Error("unable to parse ca_chain response", err)
+		b.Logger().Error("unable to parse ca_chain response", fmt.Sprint(err))
 	}
 	caEntry, err := logical.StorageEntryJSON("ca_chain/", certs[1:])
 	if err != nil {
@@ -198,40 +210,6 @@ func (b *keyfactorBackend) submitCSR(ctx context.Context, req *logical.Request, 
 
 	return certs, serial, nil
 }
-
-// reset clears any client configuration for a new
-// backend to be configured
-func (b *keyfactorBackend) reset() {
-	b.lock.Lock()
-	defer b.lock.Unlock()
-	//b.client = nil
-}
-
-// invalidate clears an existing client configuration in
-// the backend
-func (b *keyfactorBackend) invalidate(ctx context.Context, key string) {
-	if key == "config" {
-		b.reset()
-	}
-}
-
-// getClient locks the backend as it configures and creates a
-// a new client for the target API
-// func (b *keyfactorBackend) getClient(ctx context.Context, s logical.Storage) (*hashiCupsClient, error) {
-// 	b.lock.RLock()
-// 	unlockFunc := b.lock.RUnlock
-// 	defer func() { unlockFunc() }()
-
-// 	// if b.client != nil {
-// 	// 	return b.client, nil
-// 	// }
-
-// 	b.lock.RUnlock()
-// 	b.lock.Lock()
-// 	unlockFunc = b.lock.Unlock
-
-// 	return nil, fmt.Errorf("need to return client")
-// }
 
 const keyfactorHelp = `
 The Keyfactor backend is a pki service that issues and manages certificates.

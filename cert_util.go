@@ -25,43 +25,6 @@ import (
 	"github.com/hashicorp/vault/sdk/logical"
 )
 
-// type inputBundle struct {
-// 	role    *roleEntry
-// 	req     *logical.Request
-// 	apiData *framework.FieldData
-// }
-
-// var (
-// 	// A note on hostnameRegex: although we set the StrictDomainName option
-// 	// when doing the idna conversion, this appears to only affect output, not
-// 	// input, so it will allow e.g. host^123.example.com straight through. So
-// 	// we still need to use this to check the output.
-// 	hostnameRegex                = regexp.MustCompile(`^(\*\.)?(([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9])\.)*([A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9\-]*[A-Za-z0-9])\.?$`)
-// 	oidExtensionBasicConstraints = []int{2, 5, 29, 19}
-// 	oidExtensionSubjectAltName   = []int{2, 5, 29, 17}
-// )
-
-// func oidInExtensions(oid asn1.ObjectIdentifier, extensions []pkix.Extension) bool {
-// 	for _, e := range extensions {
-// 		if e.Id.Equal(oid) {
-// 			return true
-// 		}
-// 	}
-// 	return false
-// }
-
-// func getFormat(data *framework.FieldData) string {
-// 	format := data.Get("format").(string)
-// 	switch format {
-// 	case "pem":
-// 	case "der":
-// 	case "pem_bundle":
-// 	default:
-// 		format = ""
-// 	}
-// 	return format
-// }
-
 // fetch the CA info from keyfactor
 func fetchCAInfo(ctx context.Context, req *logical.Request, b *keyfactorBackend) (response *logical.Response, retErr error) {
 	// first we see if we have previously retreived the CA or chain
