@@ -36,8 +36,8 @@ func pathCerts(b *keyfactorBackend) []*framework.Path {
 				logical.ListOperation: b.pathFetchCertList,
 			},
 
-			HelpSynopsis:    pathFetchHelpSyn,
-			HelpDescription: pathFetchHelpDesc,
+			HelpSynopsis:    pathFetchListHelpSyn,
+			HelpDescription: pathFetchListHelpDesc,
 		},
 		{ // issue
 			Pattern: "issue/" + framework.GenericNameRegex("role"),
@@ -599,6 +599,14 @@ const pathFetchHelpDesc = `
 This allows certificates to be fetched. If using the fetch/ prefix any non-revoked certificate can be fetched.
 Using "ca" or "crl" as the value fetches the appropriate information in DER encoding. Add "/pem" to either to get PEM encoding.
 Using "ca_chain" as the value fetches the certificate authority trust chain in PEM encoding.
+`
+
+const pathFetchListHelpSyn = `
+List all of the certificates managed by this secrets engine.
+`
+
+const pathFetchListHelpDesc = `
+Use with the "list" command to display the list of certificate serial numbers for certificates managed by this secrets engine.
 `
 
 const pathRevokeHelpSyn = `
