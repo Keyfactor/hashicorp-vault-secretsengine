@@ -1,3 +1,4 @@
 .vs/*
-vaultSecretsEngine-update.zip
+**/*.zip
 vault/plugins/*
+.vscode/**/*
