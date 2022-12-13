@@ -465,7 +465,6 @@ func revokeCert(ctx context.Context, b *keyfactorBackend, req *logical.Request, 
 	}
 
 	defer res.Body.Close()
-	_, _ = io.ReadAll(res.Body)
 
 	alreadyRevoked := false
 	var revInfo revocationInfo
