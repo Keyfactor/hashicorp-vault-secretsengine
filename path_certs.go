@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -458,14 +458,14 @@ func revokeCert(ctx context.Context, b *keyfactorBackend, req *logical.Request, 
 		return nil, err
 	}
 	if res.StatusCode != 204 {
-		r, _ := ioutil.ReadAll(res.Body)
+		r, _ := io.ReadAll(res.Body)
 		b.Logger().Info("revocation failed: server returned" + fmt.Sprint(res.StatusCode))
 		b.Logger().Info("error response = " + fmt.Sprint(r))
 		return nil, fmt.Errorf("revocation failed: server returned  %s\n ", res.Status)
 	}
 
 	defer res.Body.Close()
-	_, _ = ioutil.ReadAll(res.Body)
+	_, _ = io.ReadAll(res.Body)
 
 	alreadyRevoked := false
 	var revInfo revocationInfo
