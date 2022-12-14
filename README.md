@@ -13,6 +13,40 @@ certificate authority. After issuance, the certificate is then returned to Hashi
 
 ---
 
+## Table of contents
+
+- [Overview](#overview)
+- [Compatibility](#compatibility)
+- [Installation Requirements](#installation-requirements)
+  - [Keyfactor Requirements](#keyfactor-requirements)
+  - [Hashicorp Vault Requirements](#hashicorp-vault-requirements)
+- [Installation - Keyfactor](#installation---keyfactor)
+  - [Create the Active Directory service account](#create-the-active-directory-service-account)
+  - [Create a certificate template](#create-a-certificate-template)
+  - [Publish the template for the Certificate Authority](#publish-the-template-for-the-certificate-authority)
+- [Installation - Vault](#installation---vault)
+  - [Check the Vault server status](#check-the-vault-server-status)
+  - [Install and register the plugin](#install-and-register-the-plugin)
+  - [Configure the plugin](#configure-the-plugin)
+- [Using the plugin](#using-the-plugin)
+  - [Adding Roles](#adding-roles)
+  - [Issuing Certificates](#issuing-certificates)
+  - [Viewing Certificates](#viewing-certificates)
+- [Command Reference](#plugin-command-reference)
+  - [Create/update configuration](#createupdate-configuration)
+  - [Read configuration](#read-configuration)
+  - [Create/update Roles](#createupdate-role)
+  - [List roles](#list-roles)
+  - [Read a role](#read-role)
+  - [Delete a role](#delete-role)
+  - [Request a certificate](#request-certificate)
+  - [List certificates](#list-certificates)
+  - [View a certificate](#read-certificate)
+  - [Revoke a certificate](#revoke-certificate)
+  - [Sign a CSR](#sign-csr)
+  - [View CA Certificate](#read-ca-cert)
+  - [View CA Certificate Chain](#read-ca-chain)
+
 ## Overview
 
 The Keyfactor Secrets Engine for Hashicorp Vault is a Vault plugin that replicates Vault’s onboard PKI API and processes certificate enrollment requests through the Keyfactor Command or Keyfactor Control platform. In many cases the onboard PKI engine included with Vault can be swapped for the Keyfactor engine seamlessly, with no impact to Vault client applications. While the simplicity of the onboard PKI is attractive to developers who are trying to implement the simplest solution in order to meet encryption requirements, it presents other enterprise teams with some challenges when it comes to PKI operations and security:
@@ -32,46 +66,48 @@ Keyfactor Command can provide the control and visibility needed for a Vault envi
 
     !["high-level-architecture"](images/arch-diagram.png)
 
-### Compatibility
+## Compatibility
 
-This Vault Plugin has been tested against Hashicorp Vault version 1.10.0 and the Keyfactor Platform 9.6+.  We provide several pre-built binaries that correspond to various operating systems and processor architectures.  If not building the plugin from source code, select the os/architecture combination that corresponds to your environment.
+This Vault Plugin has been tested against Hashicorp Vault version 1.10+ and the Keyfactor Platform 9.6+.  We provide several pre-built binary files that correspond to various operating systems and processor architectures.  If not building the plugin from source code, select the os/architecture combination that corresponds to your environment.
 
-### Installation Requirements
+## Installation Requirements
 
 The requirements for the plugin are relatively simple. It runs as a single executable on the Hashicorp Vault server.
 There are no specific system requirements to install it, however there are a few general things that must be in place for
 it to function properly. These requirements are listed below, and are then expanded in the details throughout this
 document.
 
-1. **General Keyfactor Requirements**
+### Keyfactor Requirements
+
     - A functional instance of Keyfactor Command
     - An administrative user account to be used for configuring the Keyfactor options needed for the implementation
     - A functional integrated certificate authority to be used for issuing the certificates
     - A certificate template (or templates) defined to use for certificate issuance.
     - A user account with permissions to connect to the Keyfactor API and submit certificate requests. This user account will require READ and ENROLL permissions on the certificate template that you will use for the Vault plugin.
 
-2. **General Hashicorp Vault Requirements**
-    - A functional Hashicorp Vault Installation
+### Hashicorp Vault Requirements
+
+    - A functional Hashicorp Vault Installation **version 1.10.xx or greater**.
     - An administrative account with permission to login to the Hashicorp Vault server in order to make administrative changes.
     - An adequate number of unseal keys to meet the minimum criteria to unseal the Hashicorp Vault
     - A Hashicorp Vault login token
 
 ## Installation - Keyfactor
 
-1. **Create the Active Directory service account**
+### Create the Active Directory service account
 
-    For the purposes of this document, we will not go into the details of how to create an Active Directory user since this process varies widely by company, however, here are a couple things to consider:
+For the purposes of this document, we will not go into the details of how to create an Active Directory user since this process can vary widely, however, here are a couple things to consider:
 
-    - Ensure that the user does not have an expiring password, or if it does, ensure that the password resets are managed carefully. Expiration of this password could result in production outages with the plugin.
-    - Ensure that the user does not have logon time restrictions unless you only want the Hashicorp Vault plugin to function during specific timeframes.
+- Ensure that the user does not have an expiring password, or if it does, ensure that the password resets are managed carefully. Expiration of this password could result in production outages with the plugin.
+- Ensure that the user does not have logon time restrictions unless you only want the Hashicorp Vault plugin to function during specific timeframes.
 
-1. **Assign the user permissions in Keyfactor Command**
+### Assign the user permissions in Keyfactor Command
 
-    In order to be able to enroll for certificates through the Keyfactor Command API, it will be necessary to create the necessary role and delegate permissions within Keyfactor. It is not a requirement that this be a new role. If there is an existing role within your organization that allows for these basic permissions, that role can be used for this connection. If you do not have an existing role, and would like to create one, those steps are described later in this document.
+In order to be able to enroll for certificates through the Keyfactor Command API, it will be necessary to create the necessary role and delegate permissions within Keyfactor. It is not a requirement that this be a new role. If there is an existing role within your organization that allows for these basic permissions, that role can be used for this connection. If you do not have an existing role, and would like to create one, those steps are described later in this document.
 
-1. **Create the certificate template to use**
+### Create a certificate template
 
-    The first step to configuring Keyfactor is to create the certificate template that will be used for the enrollment and publish it into Keyfactor.
+The first step to configuring Keyfactor is to create the certificate template that will be used for the enrollment and publish it into Keyfactor.
 
 **To create a new certificate template and import into Keyfactor:**
 
@@ -112,7 +148,7 @@ template.
 
     1. Click OK to save the template.
 
-### Publish the template on the Certificate Authority
+### Publish the template for the Certificate Authority
 
 It is now necessary to take the certificate template that you created and publish it so that it is an available template for issuance off of the CA.
 
@@ -157,14 +193,15 @@ To enable CSR enrollment on the template:
 1. On the properties tab for the template, enable CSR enrollment. Then click Save
 !["template12"](images/template12.png)
 
-## Installation - Hashicorp Vault
+## Installation - Vault
 
 This document covers configuration of the Keyfactor Secrets Engine Plugin for Hashicorp Vault, and assumes that there is a running Vault environment in place. This document does not cover the steps necessary to do the initial install and configuration of Hashicorp Vault.
 
 On the server that will host the vault plugin, it will be necessary to setup the appropriate environment variables and
 configuration files to enable the plugin to run and establish a connection back to Keyfactor Command.  The specific syntax for setting environment variables will differ slightly between Windows and Linux distributions, but the approach is the same.
 
-1. Confirm functionality of the Hashicorp Vault environment
+### Check the Vault server status
+
 Hashicorp Vault must be installed and running to install and register the Keyfactor Secrets Plugin. To check the status of the Vault installation on the server being used, log into the Vault server with a logon account that has sufficient administrative privileges, and issue the following command:
 
 `vault status`
@@ -195,79 +232,6 @@ cuE1X01NrNgeAU6ao5aNUFsjWAPhOgEPkgaW5Vl19XDg
 
 Once the appropriate number of keys has been entered, the status should indicate "Unsealed = True"
 
-### Encode the user credentials
-
-In order to connect to the Keyfactor system, the Keyfactor plugin will need to use the credentials for the Active Directory Service Account that you created earlier in the process. These credentials will be used within Keyfactor plugin config file, and must be in Base64 encoded Basic Auth format.
-
-To create the encoded string to use in the config file, use a Text to Base64 converter such as the one provided here:
-
-[https://base64.guru/converter/encode/text](https://base64.guru/converter/encode/text)
-
-The credential string to be encoded should be in the format of: `Domain\Username:Password`
-
-!["vault2"](images/vault2.png)
-
-### Build the Keyfactor config file
-
-*Note: The current version of this plugin stores configuration in a text file. Future plans include moving the configuration to the built in Vault configuration store*
-
-The Keyfactor plugin requires a configuration file to be built to store the parameters for the connection to Keyfactor. This file is in a standard JSON format on the Hashicorp server. The file can be stored anywhere, but is typically in a location such as: `/usr/bin/keyfactor/config.json`
-
-Based on the values below, create the config file and save it into a location on the Vault server.
-The file will look something like this:
-
-```
-{
-  "host":"kftrain.keyfactor.lab",
-  "creds":"S0VZRkFDVB9SXEFkbWluaXN0cmF0b3I6UGFzc3dvcmQx",
-  "template":"HashiCorpVaultServer",
-  "protocol":"https",
-  "CA":"kftrain.keyfactor.lab\\\\keyfactor-KFTRAIN-CA"
-}
-```
-
-The values within the file are as follows:
-
-**HOST** - This is is the hostname or IP Address for the Keyfactor server.
-
-**CREDS** - This is the username and password for the service account used to connect to Keyfactor encoded as a Base64 Basic Auth string. The details for creating this are in section 11 above.
-
-**TEMPLATE** - The Template value is the Template Short Name for the template that was created to be used for the certificate issuance. This template nme must be the same template that is setup on the API key within
-Keyfactor, and the user account specified in the CREDS parameter must have READ and ENROLL permissions on this template.
-
-**PROTOCOL** - The protocol used to connect to the Keyfactor server. This can be HTTP or HTTPS. Keyfactor recommends that HTTP only be used for sandbox or testing scenarios.
-
-**CA** - This is the CA name for the certificate authority that the certificate template is published on. Note that it may be necessary to double escape special characters in some scenarios.
-
-**IMPORTANT NOTE:** *When using HTTPS for the protocol, the Keyfactor SSL certificate or chain should be included in the trusted root store of the Hashicorp server to avoid TLS connection failures due to an untrusted certificate chain.*
-
-### Set the environment variables
-
-Once the config file is created, it is necessary to set the appropriate environment variables so that the Keyfactor plugin is able to locate the config file. To do this, set a system variable for KF_CONF_PATH that points to the location of the config file. The method to accomplish this will vary based on your system configuration.
-
-> Set environment variables in Linux with the following command:
->
-> `export <variable name>='<value>'`
->
-> in Windows:
->
-> `$env:<variable name>="<value>"`
-
-Set the **KF_CONF_PATH** to the path of the plugin configuration file.
-
-example:
-
-`export KF_CONF_PATH='/usr/bin/keyfactor/config.json'`
-
-You may also be able to add this into your environment file or rc.local startup process based on your linux
-distribution.
-
-If you are running Hashicorp Vault as a service with system, it may be necessary to add a line in the vault service config file so that this variable is set prior to Vault startup.
-
-This line should look something like this:
-
-`ExecStartPre=/bin/bash -c export KF_CONF_PATH='/usr/bin/keyfactor/config.json'`
-
 ### Install and register the plugin
 
 To install and register the plugin on the Vault server, follow these steps:
@@ -276,7 +240,7 @@ To install and register the plugin on the Vault server, follow these steps:
 
     An example plugins path may look like this:
 
-    `/usr/bin/keyfactor/vault-guides/secrets/engine/vault/plugins`
+    `/usr/bin/vault/plugins`
 
 1. Set the file to be executable.
 
@@ -293,20 +257,22 @@ To install and register the plugin on the Vault server, follow these steps:
 
     Linux:
 
-    `# vault plugin register -sha256=47f549d44ab2abcb528aa45725b3a83334a9465bb487f3d1182add55e5580c36 secret keyfactor`
+    `# vault plugin register -sha256=47f549d44ab2abcb528aa45725b3a83334a9465bb487f3d1182add55e5580c36 secret <instance name>`
 
     Windows:
 
-    `> vault plugin register -sha256=97a76ee45f8bbc3e852520cba38d16206f6a92ab0b8a2d2bbd7eaaae064ae9bf -command="keyfactor.exe" secret keyfactor`
+    `> vault plugin register -sha256=97a76ee45f8bbc3e852520cba38d16206f6a92ab0b8a2d2bbd7eaaae064ae9bf -command="keyfactor.exe" secret <instance name>`
 
-    > Windows requires the binary to have a recognized executable extension, so we name the windows binaries keyfactor.exe, but keep the path "keyfactor"
+    > Windows requires the binary to have a recognized executable extension, so we name the windows executable keyfactor.exe.
 
-    The result should look like this: `Success! Registered plugin: keyfactor`
+    The result should look like this: `Success! Registered plugin: <instance name>`
+
+    > _For the rest of this document, we will assume that the instance of the plugin is named "keyfactor"._
 
 1. Enable the plugin within Hashicorp Vault
     Once the plugin is installed into Vault, it just needs to be enabled. As a part of this enable process, you must specify the endpoint name that will be used for the secrets engine. This name is arbitrary. For this example, we are using keyfactor as the enpoint name, but it can be named to match existing endpoints that you are looking to replace with a connection to Keyfactor if necessary.
 
-    run the following command: 
+    run the following command:
 
     `vault secrets enable keyfactor`
 
@@ -344,7 +310,10 @@ you may or may not be able to access certain paths.
         Fetch a CA, CRL, CA Chain, or non-revoked certificate.
 
     ^certs/?$
-        Fetch a CA, CRL, CA Chain, or non-revoked certificate.
+        Use with the "list" command to display the list of certificate serial numbers for certificates managed by this secrets engine.
+
+    ^config$
+        Configure the Keyfactor Secrets Engine backend.
 
     ^issue/(?P<role>\w(([\w-.]+)?\w)?)$
         Request a certificate using a certain role with the provided details.
@@ -365,13 +334,44 @@ you may or may not be able to access certain paths.
 
 ```
 
+### Configure the plugin
+
+Once the plugin has been successfully installed, the next step is to set the configuration values that will allow it to interact with the Keyfactor platform.
+
+The Keyfactor plugin implements a per-instance configuration which allows multiple instances of the plugin to exist simultaneously.  This is useful in cases where you want to manage multiple certificate authorities or templates.  
+
+To set a configuration value:
+
+`vault write <instance name>/config <key>="<value>"`
+
+The values that will need to be set are the following:
+
+- url
+  - The url pointing to the keyfactor platform with no trailing slashes **(example: "https://kftrain.keyfactor.lab")**
+- username
+  - The username of the account used for authenticating to the platform including the domain **(example: "KEYFACTOR\VaultUser")**
+- password
+  - The password corresponding to the user account for authenticating to the platform.
+- ca
+  - The certificate authority used when issuing certificates via the plugin **(example: kftrain.keyfactor.lab\\\\keyfactor-KFTRAIN-CA)**
+- template
+  - The certificate template name to use when issuing certificates.  It should be issuable by the CA
+
+Once you've set the configuration properties, run the command:
+`vault read <instance name>/config`
+in order to view the configuration settings (see example below).
+
+!["configread"](images/configread.png)
+
 ## Using the plugin
 
-1. Adding Roles
-    Hashicorp Vault supports being able to add roles to control certificate issuance policies such as allowed domains. To create a role, use the vault write command as noted below
+### Adding Roles
+
+    Hashicorp Vault supports being able to add roles to control certificate issuance policies such as allowed domains. To create a role, use the vault write command as in the below example.
     `vault write keyfactor/roles/hashiwebserver allowed_domains=kftrain.lab allow_subdomains=true`
 
-1. Issuing Certificates
+### Issuing Certificates
+
     When requesting a certificate using the Keyfactor plugin, the command is the same as if you were issuing the certificate through the vault integrated PKI. As a part of the write command you will specify the role name you would like to use, as well as the common name on the certificate. A typical certificate issuance command is listed below for the hashiwebserver role, and a CN of foo.kftrain.lab on the certificate.
 
     `vault write keyfactor/issue/hashiwebserver common_name=foo.kftrain.lab dns_sans=foo.kftrain.lab`
@@ -380,7 +380,8 @@ you may or may not be able to access certain paths.
 
 !["vault3"](images/vault3.png)
 
-1. Reading Certificates from the secret store
+### Viewing Certificates
+
     After certificates are stored in the secrets store, you can then retrieve those certificates at a later time if necessary. To list the certificates that exist within the Vault store, use the LIST option with vault. The only parameter that you need to include is the secrets store name for the store that you would like to read. The system will then return a list of all of the serial numbers for certificates that are present in that secrets store.
 
     `vault list keyfactor/certs`
@@ -456,7 +457,15 @@ you may or may not be able to access certain paths.
 
 ## Plugin command reference
 
-The following commands are supported by the Keyfactor Hashicorp Vault Secrets Engine plugin:
+The following commands are supported by the Keyfactor Hashicorp Vault Secrets Engine plugin.  These examples assume the instance of the plugin is named "keyfactor".
+
+### Create/update configuration
+
+`vault write keyfactor/config <key>=<value>`
+
+### Read configuration
+
+`vault read keyfactor/config`
 
 ### Create/update role
 
@@ -503,10 +512,3 @@ The following commands are supported by the Keyfactor Hashicorp Vault Secrets En
 ### Read CA chain
 
 `vault read keyfactor/ca_chain`
-
----
-
-Additional notes for this plugin:
-
-TTL management is not handled through the secrets engine. Validity period is determined by certificate template.
-Expiration time is not reported in the enrollment output

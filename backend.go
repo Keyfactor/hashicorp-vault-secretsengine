@@ -1,121 +1,119 @@
 package keyfactor
 
 import (
-	"bytes"
 	"context"
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/asn1"
+	b64 "encoding/base64"
 	"encoding/json"
-	"encoding/pem"
+	"errors"
 	"fmt"
 	"io/ioutil"
-	"net"
 	"net/http"
-	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hashicorp/errwrap"
 	"github.com/hashicorp/vault/sdk/framework"
-	"github.com/hashicorp/vault/sdk/helper/jsonutil"
 	"github.com/hashicorp/vault/sdk/logical"
 )
 
-var config map[string]string
+//var config map[string]string
 
 // Factory configures and returns backend
 func Factory(ctx context.Context, conf *logical.BackendConfig) (logical.Backend, error) {
 
-	var b backend
-
-	b.Backend = &framework.Backend{
-		Help:        strings.TrimSpace(keyfactorHelp),
-		BackendType: logical.TypeLogical,
-		Paths: []*framework.Path{
-			pathListRoles(&b),
-			pathRoles(&b),
-			pathFetchCA(&b),
-			pathFetchCAChain(&b),
-			pathFetchValid(&b),
-			pathFetchListCerts(&b),
-			pathRevoke(&b),
-			pathIssue(&b),
-			pathSign(&b),
-		},
-		InitializeFunc: b.initialize,
+	b := backend()
+	if err := b.Setup(ctx, conf); err != nil {
+		return nil, err
 	}
-
-	if conf == nil {
-		return nil, fmt.Errorf("configuration passed into backend is nil")
-	}
-
-	b.Backend.Setup(ctx, conf)
 	return b, nil
 }
 
-// Store certificates by serial number
-type backend struct {
+// // Store certificates by serial number
+type keyfactorBackend struct {
 	*framework.Backend
+	lock         sync.RWMutex
+	cachedConfig *keyfactorConfig
+	client       *keyfactorClient
 }
 
-func (b *backend) initialize(ctx context.Context, req *logical.InitializationRequest) error {
-	err := req.Storage.Delete(ctx, "/ca")
+// keyfactorBackend defines the target API keyfactorBackend
+// for Vault. It must include each path
+// and the secrets it will store.
+func backend() *keyfactorBackend {
+	var b = keyfactorBackend{}
 
-	if err != nil {
-		b.Logger().Error("Error removing previous stored ca values on init")
-		return err
+	b.Backend = &framework.Backend{
+		Help: strings.TrimSpace(keyfactorHelp),
+		PathsSpecial: &logical.Paths{
+			LocalStorage: []string{},
+			SealWrapStorage: []string{
+				"config",
+				"role/*",
+			},
+		},
+		Paths: framework.PathAppend(
+			pathConfig(&b),
+			pathRoles(&b),
+			pathCA(&b),
+			pathCerts(&b),
+		),
+		Secrets:     []*framework.Secret{},
+		BackendType: logical.TypeLogical,
+		Invalidate:  b.invalidate,
 	}
-	confPath := os.Getenv("KF_CONF_PATH")
-	file, _ := ioutil.ReadFile(confPath)
-	config = make(map[string]string)
-	jsonutil.DecodeJSON(file, &config)
-	b.Logger().Debug("INITIALIZE: KF_CONF_PATH = " + confPath)
-	b.Logger().Debug("config file contents = ", config)
-	return nil
+	return &b
 }
 
-// Generate keypair and CSR
-func (b *backend) generateCSR(cn string, ip_sans []string, dns_sans []string) (string, []byte) {
-	keyBytes, _ := rsa.GenerateKey(rand.Reader, 2048)
-	subj := pkix.Name{
-		CommonName: cn,
+// reset clears any client configuration for a new
+// backend to be configured
+func (b *keyfactorBackend) reset() {
+	b.lock.Lock()
+	defer b.lock.Unlock()
+	b.client = nil
+}
+
+// invalidate clears an existing client configuration in
+// the backend
+func (b *keyfactorBackend) invalidate(ctx context.Context, key string) {
+	if key == "config" {
+		b.reset()
 	}
-	rawSubj := subj.ToRDNSequence()
-	asn1Subj, _ := asn1.Marshal(rawSubj)
-	var netIPSans []net.IP
-	for i := range ip_sans {
-		netIPSans = append(netIPSans, net.ParseIP(ip_sans[i]))
+}
+
+// getClient locks the backend as it configures and creates a
+// a new client for the target API
+func (b *keyfactorBackend) getClient(ctx context.Context, s logical.Storage) (*keyfactorClient, error) {
+	b.lock.RLock()
+	unlockFunc := b.lock.RUnlock
+	defer func() { unlockFunc() }()
+
+	if b.client != nil {
+		return b.client, nil
 	}
 
-	csrtemplate := x509.CertificateRequest{
-		RawSubject:         asn1Subj,
-		SignatureAlgorithm: x509.SHA256WithRSA,
-		IPAddresses:        netIPSans,
-		DNSNames:           dns_sans,
-	}
-	csrBytes, _ := x509.CreateCertificateRequest(rand.Reader, &csrtemplate, keyBytes)
-	csrBuf := new(bytes.Buffer)
-	pem.Encode(csrBuf, &pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrBytes})
-	return csrBuf.String(), x509.MarshalPKCS1PrivateKey(keyBytes)
+	b.lock.RUnlock()
+	b.lock.Lock()
+	unlockFunc = b.lock.Unlock
+
+	return nil, fmt.Errorf("need to return client")
 }
 
 // Handle interface with Keyfactor API to enroll a certificate with given content
-func (b *backend) submitCSR(ctx context.Context, req *logical.Request, csr string, caName string, templateName string) ([]string, string, error) {
-	host := config["host"]
-	template := config["template"]
-	ca := config["CA"]
-	creds := config["creds"]
-
-	if caName != "" {
-		ca = caName
+func (b *keyfactorBackend) submitCSR(ctx context.Context, req *logical.Request, csr string, caName string, templateName string) ([]string, string, error) {
+	config, err := b.config(ctx, req.Storage)
+	if err != nil {
+		return nil, "", err
+	}
+	if config == nil {
+		return nil, "", errors.New("configuration is empty.")
 	}
 
-	if templateName != "" {
-		template = templateName
-	}
+	ca := config.CertAuthority
+	template := config.CertTemplate
+
+	creds := config.Username + ":" + config.Password
+	encCreds := b64.StdEncoding.EncodeToString([]byte(creds))
 
 	location, _ := time.LoadLocation("UTC")
 	t := time.Now().In(location)
@@ -126,7 +124,7 @@ func (b *backend) submitCSR(ctx context.Context, req *logical.Request, csr strin
 	http.DefaultClient.CloseIdleConnections()
 
 	// Build request
-	url := config["protocol"] + "://" + host + "/KeyfactorAPI/Enrollment/CSR"
+	url := config.KeyfactorUrl + "/KeyfactorAPI/Enrollment/CSR"
 	b.Logger().Debug("url: " + url)
 	bodyContent := "{\"CSR\": \"" + csr + "\",\"CertificateAuthority\":\"" + ca + "\",\"IncludeChain\": true, \"Metadata\": {}, \"Timestamp\": \"" + time + "\",\"Template\": \"" + template + "\",\"SANs\": {}}"
 	payload := strings.NewReader(bodyContent)
@@ -137,21 +135,21 @@ func (b *backend) submitCSR(ctx context.Context, req *logical.Request, csr strin
 	}
 	httpReq.Header.Add("x-keyfactor-requested-with", "APIClient")
 	httpReq.Header.Add("content-type", "application/json")
-	httpReq.Header.Add("authorization", "Basic "+creds)
+	httpReq.Header.Add("authorization", "Basic "+encCreds)
 	httpReq.Header.Add("x-certificateformat", "PEM")
 
 	// Send request and check status
-	b.Logger().Debug("About to connect to " + config["host"] + "for csr submission")
+	b.Logger().Debug("About to connect to " + config.KeyfactorUrl + "for csr submission")
 	res, err := http.DefaultClient.Do(httpReq)
 	if err != nil {
-		b.Logger().Info("CSR Enrollment failed: {{err}}", err)
+		b.Logger().Info("CSR Enrollment failed: {{err}}", err.Error())
 		return nil, "", err
 	}
 	if res.StatusCode != 200 {
 		b.Logger().Error("CSR Enrollment failed: server returned" + fmt.Sprint(res.StatusCode))
 		defer res.Body.Close()
 		body, _ := ioutil.ReadAll(res.Body)
-		b.Logger().Error("Error response: " + fmt.Sprint(body))
+		b.Logger().Error("Error response: " + string(body[:]))
 		return nil, "", fmt.Errorf("enrollment failed: server returned  %d\n ", res.StatusCode)
 	}
 
@@ -180,7 +178,7 @@ func (b *backend) submitCSR(ctx context.Context, req *logical.Request, csr strin
 	kfId := inner["KeyfactorID"].(float64)
 
 	if err != nil {
-		b.Logger().Error("unable to parse ca_chain response", err)
+		b.Logger().Error("unable to parse ca_chain response", fmt.Sprint(err))
 	}
 	caEntry, err := logical.StorageEntryJSON("ca_chain/", certs[1:])
 	if err != nil {
