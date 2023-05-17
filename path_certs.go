@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	b64 "encoding/base64"
 	"encoding/json"
-	"encoding/pem"
 	"fmt"
 	"io"
 	"net/http"
@@ -117,8 +116,7 @@ func (b *keyfactorBackend) pathFetchCert(ctx context.Context, req *logical.Reque
 	var serial, contentType string
 	var certEntry, revokedEntry *logical.StorageEntry
 	var funcErr error
-	var certificate []byte
-	var block pem.Block
+	var certificate string
 	var revocationTime int64
 	response = &logical.Response{
 		Data: map[string]interface{}{},
@@ -131,7 +129,6 @@ func (b *keyfactorBackend) pathFetchCert(ctx context.Context, req *logical.Reque
 	b.Logger().Debug("fetching cert, path = " + req.Path)
 
 	serial = data.Get("serial").(string)
-	pemType := "CERTIFICATE"
 
 	if len(serial) == 0 {
 		response = logical.ErrorResponse("The serial number must be provided")
@@ -156,13 +153,9 @@ func (b *keyfactorBackend) pathFetchCert(ctx context.Context, req *logical.Reque
 		goto reply
 	}
 
-	block = pem.Block{
-		Type:  pemType,
-		Bytes: certEntry.Value,
-	}
+	b.Logger().Debug("fetched certEntry.Value = ", certEntry.Value)
 
-	certificate = []byte(strings.TrimSpace(string(pem.EncodeToMemory(&block))))
-
+	certificate = string(certEntry.Value)
 	revokedEntry, funcErr = fetchCertBySerial(ctx, req, "revoked/", serial)
 	if funcErr != nil {
 		switch funcErr.(type) {
@@ -509,19 +502,6 @@ func revokeCert(ctx context.Context, b *keyfactorBackend, req *logical.Request, 
 		}
 		b.Logger().Info("certEntry key = " + certEntry.Key)
 		b.Logger().Info("certEntry value = " + string(certEntry.Value))
-		// cert, err := x509.ParseCertificate(certEntry.Value)
-		// if err != nil {
-		// 	return nil, errwrap.Wrapf("error parsing certificate: {{err}}", err)
-		// }
-		// if cert == nil {
-		// 	return nil, fmt.Errorf("got a nil certificate")
-		// }
-
-		// Add a little wiggle room because leases are stored with a second
-		// granularity
-		// if cert.NotAfter.Before(time.Now().Add(2 * time.Second)) {
-		// 	return nil, nil
-		// }
 
 		currTime := time.Now()
 		revInfo.CertificateBytes = certEntry.Value
@@ -539,14 +519,6 @@ func revokeCert(ctx context.Context, b *keyfactorBackend, req *logical.Request, 
 		}
 
 	}
-
-	// crlErr := buildCRL(ctx, b, req, false)
-	// switch crlErr.(type) {
-	// case errutil.UserError:
-	// 	return logical.ErrorResponse(fmt.Sprintf("Error during CRL building: %s", crlErr)), nil
-	// case errutil.InternalError:
-	// 	return nil, errwrap.Wrapf("error encountered during CRL building: {{err}}", crlErr)
-	// }
 
 	resp := &logical.Response{
 		Data: map[string]interface{}{

@@ -106,7 +106,7 @@ func (b *keyfactorBackend) submitCSR(ctx context.Context, req *logical.Request, 
 		return nil, "", err
 	}
 	if config == nil {
-		return nil, "", errors.New("configuration is empty.")
+		return nil, "", errors.New("configuration is empty")
 	}
 
 	ca := config.CertAuthority
@@ -154,10 +154,11 @@ func (b *keyfactorBackend) submitCSR(ctx context.Context, req *logical.Request, 
 	}
 
 	// Read response and return certificate and key
+
 	defer res.Body.Close()
 	body, err := ioutil.ReadAll(res.Body)
 	if err != nil {
-		b.Logger().Info("Error reading response: {{err}}", err)
+		b.Logger().Error("Error reading response: {{err}}", err)
 		return nil, "", err
 	}
 
@@ -177,6 +178,8 @@ func (b *keyfactorBackend) submitCSR(ctx context.Context, req *logical.Request, 
 	serial := inner["SerialNumber"].(string)
 	kfId := inner["KeyfactorID"].(float64)
 
+	b.Logger().Debug("parsed response: ", certI...)
+
 	if err != nil {
 		b.Logger().Error("unable to parse ca_chain response", fmt.Sprint(err))
 	}
@@ -190,20 +193,26 @@ func (b *keyfactorBackend) submitCSR(ctx context.Context, req *logical.Request, 
 		b.Logger().Error("error storing the ca_chain locally", err)
 	}
 
-	err = req.Storage.Put(ctx, &logical.StorageEntry{
-		Key:   "certs/" + normalizeSerial(serial),
+	key := "certs/" + normalizeSerial(serial)
+
+	entry := &logical.StorageEntry{
+		Key:   key,
 		Value: []byte(certs[0]),
-	})
+	}
+
+	b.Logger().Debug("cert entry.Value = ", string(entry.Value))
+
+	err = req.Storage.Put(ctx, entry)
 	if err != nil {
 		return nil, "", errwrap.Wrapf("unable to store certificate locally: {{err}}", err)
 	}
 
-	entry, err := logical.StorageEntryJSON("kfId/"+normalizeSerial(serial), kfId)
+	kfIdEntry, err := logical.StorageEntryJSON("kfId/"+normalizeSerial(serial), kfId)
 	if err != nil {
 		return nil, "", err
 	}
 
-	err = req.Storage.Put(ctx, entry)
+	err = req.Storage.Put(ctx, kfIdEntry)
 	if err != nil {
 		return nil, "", errwrap.Wrapf("unable to store the keyfactor ID for the certificate locally: {{err}}", err)
 	}
