@@ -17,7 +17,7 @@ jobs:
   goreleaser:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           # Allow goreleaser to access older tag information.
           fetch-depth: 0
@@ -26,13 +26,13 @@ jobs:
           go-version-file: 'go.mod'
           cache: true
       - name: Import GPG key
-        uses: crazy-max/ghaction-import-gpg@v5
+        uses: crazy-max/ghaction-import-gpg@v6
         id: import_gpg
         with:
           gpg_private_key: ${{ secrets.KF_GPG_PRIVATE_KEY }}
           passphrase: ${{ secrets.KF_GPG_PASSPHRASE }}
       - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v4
+        uses: goreleaser/goreleaser-action@v5
         with:
           args: release --clean
         env:
