@@ -1,6 +1,9 @@
 .vs/*
-vaultSecretsEngine-update.zip
+*.zip
 vault/plugins/*
+*.sh
 *.exe
 keyfactor
-hashicorp-vault-secretsengine.zip
+Keyfactor Vault Secrets Engine Guide.docx
+Makefile
+sample_config.json

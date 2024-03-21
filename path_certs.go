@@ -326,16 +326,32 @@ func (b *keyfactorBackend) pathIssueSignCert(ctx context.Context, req *logical.R
 
 	//check role permissions
 	var err_resp error
-	if strings.Contains(cn.(string), role.AllowedBaseDomain) && !role.AllowSubdomains {
-		err_resp = fmt.Errorf("sub-domains not allowed for role")
+	var valid bool
+	var hasSuffix bool
+
+	for _, v := range role.AllowedDomains {
+		b.Logger().Warn(v)
+		if strings.HasSuffix(cn.(string), v) {
+			hasSuffix = true
+			if cn.(string) == v || role.AllowSubdomains {
+				valid = true
+			}
+		}
 	}
-	if role.AllowedBaseDomain == cn.(string) {
-		err_resp = fmt.Errorf("common name not allowed for provided role")
+
+	if !valid {
+		err_resp = fmt.Errorf("common name not allowed for role")
+	}
+	if !valid && hasSuffix {
+		err_resp = fmt.Errorf("sub-domains not allowed for role")
 	}
 
 	if err_resp != nil {
 		return nil, err_resp
 	}
+
+	b.Logger().Warn("role.AllowedBaseDomain = " + role.AllowedBaseDomain)
+	b.Logger().Warn("domain for cert = " + cn.(string))
 
 	for u := range dns_sans {
 		if !strings.Contains(dns_sans[u], role.AllowedBaseDomain) || strings.Contains(dns_sans[u], role.AllowedBaseDomain) && !role.AllowSubdomains {
