@@ -2,3 +2,5 @@
 vaultSecretsEngine-update.zip
 vault/plugins/*
 *.exe
+keyfactor
+hashicorp-vault-secretsengine.zip
