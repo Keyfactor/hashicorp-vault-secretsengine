@@ -66,6 +66,22 @@ Keyfactor Command can provide the control and visibility needed for a Vault envi
 
     !["high-level-architecture"](images/arch-diagram.png)
 
+> [!IMPORTANT]
+> The Keyfactor Vault Secrets Engine is designed to be a drop in replacement for the native
+> Vault CA, and implements most of the functionality provided by the PKI secrets engine
+> to enable enterprise grade certificate management for certificates requested via
+> Vault.  There are some important security differences when using the Keyfactor plugin,
+> namely in how certificate issuance polices are enforced. The plugin only supports domain
+> and subdomain restrictive role polices and defers to the Command infrastructure for it's
+> issuance security model based on certificate templates. The only role parameters utilized
+> by this secrets engine are "AllowedDomains" and "AllowSubDomains".  Other parameters
+> utilized by the Vault native PKI secrets engine, such as "TTL", "KeyType", "AllowIPSANs",
+> etc.  For reference, the full list of fields supported by the Vault PKI secrets engine can
+> be found [here](https://developer.hashicorp.com/vault/api-docs/secret/pki#list-roles).
+> When architecting a solution, consideration should be given to the
+> native Vault policies, the roles implemented by the secrets engine plugin, and the template
+> rules available in Command.
+
 ## Compatibility
 
 This Vault Plugin has been tested against Hashicorp Vault version 1.10+ and the Keyfactor Platform 9.6+.  We provide several pre-built binary files that correspond to various operating systems and processor architectures.  If not building the plugin from source code, select the os/architecture combination that corresponds to your environment.
