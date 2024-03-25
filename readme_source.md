@@ -28,8 +28,8 @@ certificate authority. After issuance, the certificate is then returned to Hashi
   - [Check the Vault server status](#check-the-vault-server-status)
   - [Install and register the plugin](#install-and-register-the-plugin)
   - [Configure the plugin](#configure-the-plugin)
-- [Using the plugin](#using-the-plugin)
   - [Adding Roles](#adding-roles)
+- [Using the plugin](#using-the-plugin)
   - [Issuing Certificates](#issuing-certificates)
   - [Viewing Certificates](#viewing-certificates)
 - [Command Reference](#plugin-command-reference)
@@ -66,6 +66,22 @@ Keyfactor Command can provide the control and visibility needed for a Vault envi
 
     !["high-level-architecture"](images/arch-diagram.png)
 
+> [!IMPORTANT]
+> The Keyfactor Vault Secrets Engine is designed to be a drop in replacement for the native
+> Vault CA, and implements most of the functionality provided by the PKI secrets engine
+> to enable enterprise grade certificate management for certificates requested via
+> Vault.  There are some important security differences when using the Keyfactor plugin,
+> namely in how certificate issuance polices are enforced. The plugin only supports domain
+> and subdomain restrictive role polices and defers to the Command infrastructure for it's
+> issuance security model based on certificate templates. The only role parameters utilized
+> by this secrets engine are "AllowedDomains" and "AllowSubDomains".  Other parameters
+> utilized by the Vault native PKI secrets engine, such as "TTL", "KeyType", "AllowIPSANs",
+> etc.  For reference, the full list of fields supported by the Vault PKI secrets engine can
+> be found [here](https://developer.hashicorp.com/vault/api-docs/secret/pki#list-roles).
+> When architecting a solution, consideration should be given to the
+> native Vault policies, the roles implemented by the secrets engine plugin, and the template
+> rules available in Command.
+
 ## Compatibility
 
 This Vault Plugin has been tested against Hashicorp Vault version 1.10+ and the Keyfactor Platform 9.6+.  We provide several pre-built binary files that correspond to various operating systems and processor architectures.  If not building the plugin from source code, select the os/architecture combination that corresponds to your environment.
@@ -79,18 +95,18 @@ document.
 
 ### Keyfactor Requirements
 
-    - A functional instance of Keyfactor Command
-    - An administrative user account to be used for configuring the Keyfactor options needed for the implementation
-    - A functional integrated certificate authority to be used for issuing the certificates
-    - A certificate template (or templates) defined to use for certificate issuance.
-    - A user account with permissions to connect to the Keyfactor API and submit certificate requests. This user account will require READ and ENROLL permissions on the certificate template that you will use for the Vault plugin.
+- A functional instance of Keyfactor Command
+- An administrative user account to be used for configuring the Keyfactor options needed for the implementation
+- A functional integrated certificate authority to be used for issuing the certificates
+- A certificate template (or templates) defined to use for certificate issuance.
+- A user account with permissions to connect to the Keyfactor API and submit certificate requests. This user account will require READ and ENROLL permissions on the certificate template that you will use for the Vault plugin.
 
 ### Hashicorp Vault Requirements
 
-    - A functional Hashicorp Vault Installation **version 1.10.xx or greater**.
-    - An administrative account with permission to login to the Hashicorp Vault server in order to make administrative changes.
-    - An adequate number of unseal keys to meet the minimum criteria to unseal the Hashicorp Vault
-    - A Hashicorp Vault login token
+- A functional Hashicorp Vault Installation **version 1.10.xx or greater**.
+- An administrative account with permission to login to the Hashicorp Vault server in order to make administrative changes.
+- An adequate number of unseal keys to meet the minimum criteria to unseal the Hashicorp Vault
+- A Hashicorp Vault login token
 
 ## Installation - Keyfactor
 
@@ -363,97 +379,103 @@ in order to view the configuration settings (see example below).
 
 !["configread"](images/configread.png)
 
-## Using the plugin
-
 ### Adding Roles
 
-    Hashicorp Vault supports being able to add roles to control certificate issuance policies such as allowed domains. To create a role, use the vault write command as in the below example.
-    `vault write keyfactor/roles/hashiwebserver allowed_domains=kftrain.lab allow_subdomains=true`
+Hashicorp Vault supports being able to add roles to control certificate issuance policies for allowed domains and allowing sub-domain certificates to be created.
+To create a role, use the vault write command as in the below example.
+
+`vault write keyfactor/roles/hashiwebserver allowed_domains=kftrain.lab allow_subdomains=true`
+
+This will create a role called "hashiwebserver" that can be used to generate certificates for domains ending with "kftrain.lab".
+
+These properties can also be set in the certificate template.  If they differ, the most restrictive setting is applied.
+
+## Using the plugin
 
 ### Issuing Certificates
 
-    When requesting a certificate using the Keyfactor plugin, the command is the same as if you were issuing the certificate through the vault integrated PKI. As a part of the write command you will specify the role name you would like to use, as well as the common name on the certificate. A typical certificate issuance command is listed below for the hashiwebserver role, and a CN of foo.kftrain.lab on the certificate.
+When requesting a certificate using the Keyfactor plugin, the command is the same as if you were issuing the certificate through the vault integrated PKI. As a part of the write command you will specify the role name you would like to use, as well as the common name on the certificate. A typical certificate issuance command is listed below for the hashiwebserver role, and a CN of foo.kftrain.lab on the certificate.
 
-    `vault write keyfactor/issue/hashiwebserver common_name=foo.kftrain.lab dns_sans=foo.kftrain.lab`
+`vault write keyfactor/issue/hashiwebserver common_name=foo.kftrain.lab dns_sans=foo.kftrain.lab`
 
-    The resulting response will show the certificate data response for the request. This certificate will also be stored in the Vault secrets store.
+The resulting response will show the certificate data response for the request. This certificate will also be stored in the Vault secrets store.
 
 !["vault3"](images/vault3.png)
 
 ### Viewing Certificates
 
-    After certificates are stored in the secrets store, you can then retrieve those certificates at a later time if necessary. To list the certificates that exist within the Vault store, use the LIST option with vault. The only parameter that you need to include is the secrets store name for the store that you would like to read. The system will then return a list of all of the serial numbers for certificates that are present in that secrets store.
+After certificates are stored in the secrets store, you can then retrieve those certificates at a later time if necessary. To list the certificates that exist within the Vault store, use the LIST option with vault. The only parameter that you need to include is the secrets store name for the store that you would like to read. The system will then return a list of all of the serial numbers for certificates that are present in that secrets store.
 
-    `vault list keyfactor/certs`
+`vault list keyfactor/certs`
 
-    The results of the command will be a list of serial numbers for the certificates in that store location:
+The results of the command will be a list of serial numbers for the certificates in that store location:
 
-    ```
-    Keys
-    ----
-    750000276546d818cbe70231b6000000002765
-    750000276623facfaddb6c4ca1000000002766
-    ```
+```
+Keys
+----
+750000276546d818cbe70231b6000000002765
+750000276623facfaddb6c4ca1000000002766
+```
 
-    If you would like to retrieve a specific certificate from the store, you can do so by using the "vault read" command, and specifying the serial number of the certificate that you would like returned. The format for the command looks like this:
+If you would like to retrieve a specific certificate from the store, you can do so by using the "vault read" command, and specifying the serial number of the certificate that you would like returned. The format for the command looks like this:
 
-    `vault read keyfactor/cert/<serial>`
+`vault read keyfactor/cert/<serial>`
 
-    example:
+example:
 
-    `vault read keyfactor/cert/750000276546d818cbe70231b6000000002765`
+`vault read keyfactor/cert/750000276546d818cbe70231b6000000002765`
 
-    The response will show the value for that certificate.
+The response will show the value for that certificate.
 
-    ```
-    Key                Value
-    ---                -----
-    certificate        -----BEGIN CERTIFICATE-----
-    LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tDQpNSUlGZXpDQ0JHT2dBd0lCQWdJ
-    VGRRQUFKMlZHMkJqTDV3SXh0Z0FBQUFBblpUQU5CZ2txaGtpRzl3MEJBUXNGDQpB
-    REJQTVJNd0VRWUtDWkltaVpQeUxHUUJHUllEYkdGaU1Sa3dGd1lLQ1pJbWlaUHlM
-    R1FCR1JZSmEyVjVabUZqDQpkRzl5TVIwd0d3WURWUVFERXhSclpYbG1ZV04wYjNJ
-    dFMwWlVVa0ZKVGkxRFFUQWVGdzB5TWpBME1qSXhOVE0xDQpNVGxhRncweU1qQTNN
-    akV4TlRNMU1UbGFNQm94R0RBV0JnTlZCQU1URDNWMWRTNXJablJ5WVdsdUxteGhZ
-    akNDDQpBU0l3RFFZSktvWklodmNOQVFFQkJRQURnZ0VQQURDQ0FRb0NnZ0VCQU9h
-    MmEwQzVoeWpvUHRWbWNqUGRVZlhuDQpKU3BvbkRyQ1dJT1ROcmxTcytkbWM3aFNw
-    SjdTanZvcCtSZUIrRFVQWWhXbFBETWZlOGFFSEkyUFAwMGg3dVd3DQpBaHJ6T2Jk
-    MmthUkhyOXZDU2h6dE1vYjBQd0JrTG9MK2JLUWRIK2xTM1RVMHpKQytidUV0WWJ3
-    dHcvOGJSdFNFDQpIRWJaMXNrU1Y5RmJzWlBjb3I2WTVqcFV0ck85Y1dhbUs3d0Jw
-    dkFnVHEzYk44ZWt5ZUl4R1V6YVhjRHd2aEVnDQoxcG5xS1loY3NmOU03b2R1Ullv
-    Uytpcy9BTmlXZllSMDZBV29odE41VHlJVXBlcnVIZEh6WWpBYXJ4RXhzWEFrDQpR
-    d3BxVGF5dTFNUWU1cllYdWpyL1FEOG5EbGl5TXp6NjJINmNjRkRmWmhHNWZkVUJK
-    K25uRTlTbllabDRCcmNDDQpBd0VBQWFPQ0FvTXdnZ0ovTUJvR0ExVWRFUVFUTUJH
-    Q0QzVjFkUzVyWm5SeVlXbHVMbXhoWWpBZEJnTlZIUTRFDQpGZ1FVS0E0VkFhS3M5
-    a2RjL3VXQXR3Sm5TSUJleVM4d0h3WURWUjBqQkJnd0ZvQVVjQlV6UFc3WlF1cVVN
-    UDNSDQpGVENiRFUxaFRHVXdnZFFHQTFVZEh3U0J6RENCeVRDQnhxQ0J3NkNCd0lh
-    QnZXeGtZWEE2THk4dlEwNDlhMlY1DQpabUZqZEc5eUxVdEdWRkpCU1U0dFEwRXNR
-    MDQ5UzBaVWNtRnBiaXhEVGoxRFJGQXNRMDQ5VUhWaWJHbGpKVEl3DQpTMlY1SlRJ
-    d1UyVnlkbWxqWlhNc1EwNDlVMlZ5ZG1salpYTXNRMDQ5UTI5dVptbG5kWEpoZEds
-    dmJpeEVRejFyDQpaWGxtWVdOMGIzSXNSRU05YkdGaVAyTmxjblJwWm1sallYUmxV
-    bVYyYjJOaGRHbHZia3hwYzNRL1ltRnpaVDl2DQpZbXBsWTNSRGJHRnpjejFqVWt4
-    RWFYTjBjbWxpZFhScGIyNVFiMmx1ZERDQnlBWUlLd1lCQlFVSEFRRUVnYnN3DQpn
-    Ymd3Z2JVR0NDc0dBUVVGQnpBQ2hvR29iR1JoY0Rvdkx5OURUajFyWlhsbVlXTjBi
-    M0l0UzBaVVVrRkpUaTFEDQpRU3hEVGoxQlNVRXNRMDQ5VUhWaWJHbGpKVEl3UzJW
-    NUpUSXdVMlZ5ZG1salpYTXNRMDQ5VTJWeWRtbGpaWE1zDQpRMDQ5UTI5dVptbG5k
-    WEpoZEdsdmJpeEVRejFyWlhsbVlXTjBiM0lzUkVNOWJHRmlQMk5CUTJWeWRHbG1h
-    V05oDQpkR1UvWW1GelpUOXZZbXBsWTNSRGJHRnpjejFqWlhKMGFXWnBZMkYwYVc5
-    dVFYVjBhRzl5YVhSNU1BNEdBMVVkDQpEd0VCL3dRRUF3SUZvREE5QmdrckJnRUVB
-    WUkzRlFjRU1EQXVCaVlyQmdFRUFZSTNGUWlEbWVSL2d1aXhNNGZaDQptUStCcTkx
-    RWgrQzNLZ3VGc3F4YmhyVFlWUUlCWkFJQkNUQVRCZ05WSFNVRUREQUtCZ2dyQmdF
-    RkJRY0RBVEFiDQpCZ2tyQmdFRUFZSTNGUW9FRGpBTU1Bb0dDQ3NHQVFVRkJ3TUJN
-    QTBHQ1NxR1NJYjNEUUVCQ3dVQUE0SUJBUUNBDQpqa1ZBTi9hL0NtVm5DTVV2RW1V
-    S0FuN1BhMFlpTmxxZVJwU2NIZ1dpYnZjc0NLM1Z1VTlSaENBdldpb1RBMytwDQpr
-    VXhYL0c4LzFlOXRlcWJnaElMZ2ZtemJuWndvZU1BTHo0aFZqYmtVYy83cGpaSVBr
-    ejA1cXRaT1ZSUzluaEVMDQpRM0xocEFtcmZXbzYxU0l3bHl3WEowV1YxU050UEtu
-    bUFvQUV2ZUIvSEpNSitkeTM1Q084Y2tOMFVidmk2OUhsDQoya1pIdE1LUWJsckk3
-    ZXV2MHdnVERqWVIvdms3Yjl0UWlxSmE0YURvMnRsZmF2KzF4Tk40WVdxa3R2QUth
-    c3hsDQpBVW02bjdydVh5OEs4d005bEFVU2Rwb29iNzdQQ1lpTWhZRkF0ODUzQVlD
-    R1N0bU1nT21Pa0F1YVVEUHNET3pQDQplUXd1S25Hdy82WDJlUXltaU1BWQ0KLS0t
-    LS1FTkQgQ0VSVElGSUNBVEUtLS0tLQ0K
-    -----END CERTIFICATE-----
-    revocation_time    0
-    ```
+```
+Key                Value
+---                -----
+certificate        -----BEGIN CERTIFICATE-----
+LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tDQpNSUlGZXpDQ0JHT2dBd0lCQWdJ
+VGRRQUFKMlZHMkJqTDV3SXh0Z0FBQUFBblpUQU5CZ2txaGtpRzl3MEJBUXNGDQpB
+REJQTVJNd0VRWUtDWkltaVpQeUxHUUJHUllEYkdGaU1Sa3dGd1lLQ1pJbWlaUHlM
+R1FCR1JZSmEyVjVabUZqDQpkRzl5TVIwd0d3WURWUVFERXhSclpYbG1ZV04wYjNJ
+dFMwWlVVa0ZKVGkxRFFUQWVGdzB5TWpBME1qSXhOVE0xDQpNVGxhRncweU1qQTNN
+akV4TlRNMU1UbGFNQm94R0RBV0JnTlZCQU1URDNWMWRTNXJablJ5WVdsdUxteGhZ
+akNDDQpBU0l3RFFZSktvWklodmNOQVFFQkJRQURnZ0VQQURDQ0FRb0NnZ0VCQU9h
+MmEwQzVoeWpvUHRWbWNqUGRVZlhuDQpKU3BvbkRyQ1dJT1ROcmxTcytkbWM3aFNw
+SjdTanZvcCtSZUIrRFVQWWhXbFBETWZlOGFFSEkyUFAwMGg3dVd3DQpBaHJ6T2Jk
+MmthUkhyOXZDU2h6dE1vYjBQd0JrTG9MK2JLUWRIK2xTM1RVMHpKQytidUV0WWJ3
+dHcvOGJSdFNFDQpIRWJaMXNrU1Y5RmJzWlBjb3I2WTVqcFV0ck85Y1dhbUs3d0Jw
+dkFnVHEzYk44ZWt5ZUl4R1V6YVhjRHd2aEVnDQoxcG5xS1loY3NmOU03b2R1Ullv
+Uytpcy9BTmlXZllSMDZBV29odE41VHlJVXBlcnVIZEh6WWpBYXJ4RXhzWEFrDQpR
+d3BxVGF5dTFNUWU1cllYdWpyL1FEOG5EbGl5TXp6NjJINmNjRkRmWmhHNWZkVUJK
+K25uRTlTbllabDRCcmNDDQpBd0VBQWFPQ0FvTXdnZ0ovTUJvR0ExVWRFUVFUTUJH
+Q0QzVjFkUzVyWm5SeVlXbHVMbXhoWWpBZEJnTlZIUTRFDQpGZ1FVS0E0VkFhS3M5
+a2RjL3VXQXR3Sm5TSUJleVM4d0h3WURWUjBqQkJnd0ZvQVVjQlV6UFc3WlF1cVVN
+UDNSDQpGVENiRFUxaFRHVXdnZFFHQTFVZEh3U0J6RENCeVRDQnhxQ0J3NkNCd0lh
+QnZXeGtZWEE2THk4dlEwNDlhMlY1DQpabUZqZEc5eUxVdEdWRkpCU1U0dFEwRXNR
+MDQ5UzBaVWNtRnBiaXhEVGoxRFJGQXNRMDQ5VUhWaWJHbGpKVEl3DQpTMlY1SlRJ
+d1UyVnlkbWxqWlhNc1EwNDlVMlZ5ZG1salpYTXNRMDQ5UTI5dVptbG5kWEpoZEds
+dmJpeEVRejFyDQpaWGxtWVdOMGIzSXNSRU05YkdGaVAyTmxjblJwWm1sallYUmxV
+bVYyYjJOaGRHbHZia3hwYzNRL1ltRnpaVDl2DQpZbXBsWTNSRGJHRnpjejFqVWt4
+RWFYTjBjbWxpZFhScGIyNVFiMmx1ZERDQnlBWUlLd1lCQlFVSEFRRUVnYnN3DQpn
+Ymd3Z2JVR0NDc0dBUVVGQnpBQ2hvR29iR1JoY0Rvdkx5OURUajFyWlhsbVlXTjBi
+M0l0UzBaVVVrRkpUaTFEDQpRU3hEVGoxQlNVRXNRMDQ5VUhWaWJHbGpKVEl3UzJW
+NUpUSXdVMlZ5ZG1salpYTXNRMDQ5VTJWeWRtbGpaWE1zDQpRMDQ5UTI5dVptbG5k
+WEpoZEdsdmJpeEVRejFyWlhsbVlXTjBiM0lzUkVNOWJHRmlQMk5CUTJWeWRHbG1h
+V05oDQpkR1UvWW1GelpUOXZZbXBsWTNSRGJHRnpjejFqWlhKMGFXWnBZMkYwYVc5
+dVFYVjBhRzl5YVhSNU1BNEdBMVVkDQpEd0VCL3dRRUF3SUZvREE5QmdrckJnRUVB
+WUkzRlFjRU1EQXVCaVlyQmdFRUFZSTNGUWlEbWVSL2d1aXhNNGZaDQptUStCcTkx
+RWgrQzNLZ3VGc3F4YmhyVFlWUUlCWkFJQkNUQVRCZ05WSFNVRUREQUtCZ2dyQmdF
+RkJRY0RBVEFiDQpCZ2tyQmdFRUFZSTNGUW9FRGpBTU1Bb0dDQ3NHQVFVRkJ3TUJN
+QTBHQ1NxR1NJYjNEUUVCQ3dVQUE0SUJBUUNBDQpqa1ZBTi9hL0NtVm5DTVV2RW1V
+S0FuN1BhMFlpTmxxZVJwU2NIZ1dpYnZjc0NLM1Z1VTlSaENBdldpb1RBMytwDQpr
+VXhYL0c4LzFlOXRlcWJnaElMZ2ZtemJuWndvZU1BTHo0aFZqYmtVYy83cGpaSVBr
+ejA1cXRaT1ZSUzluaEVMDQpRM0xocEFtcmZXbzYxU0l3bHl3WEowV1YxU050UEtu
+bUFvQUV2ZUIvSEpNSitkeTM1Q084Y2tOMFVidmk2OUhsDQoya1pIdE1LUWJsckk3
+ZXV2MHdnVERqWVIvdms3Yjl0UWlxSmE0YURvMnRsZmF2KzF4Tk40WVdxa3R2QUth
+c3hsDQpBVW02bjdydVh5OEs4d005bEFVU2Rwb29iNzdQQ1lpTWhZRkF0ODUzQVlD
+R1N0bU1nT21Pa0F1YVVEUHNET3pQDQplUXd1S25Hdy82WDJlUXltaU1BWQ0KLS0t
+LS1FTkQgQ0VSVElGSUNBVEUtLS0tLQ0K
+-----END CERTIFICATE-----
+revocation_time    0
+```
 
 ## Plugin command reference
 
