@@ -1,0 +1,19 @@
+name: Keyfactor Bootstrap Workflow
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [opened, closed, synchronize, edited, reopened]
+  push:
+  create:
+    branches:
+      - 'release-*.*'
+
+jobs:
+  call-starter-workflow:
+    uses: keyfactor/actions/.github/workflows/starter.yml@v2
+    secrets:
+      token: ${{ secrets.V2BUILDTOKEN}}
+      APPROVE_README_PUSH: ${{ secrets.APPROVE_README_PUSH}}
+      gpg_key: ${{ secrets.KF_GPG_PRIVATE_KEY }}
+      gpg_pass: ${{ secrets.KF_GPG_PASSPHRASE }}
