@@ -36,7 +36,7 @@ archives:
   - format: zip
     name_template: '{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}'
 checksum:
-  name_template: '{{ .ProjectName }}.{{ .Algorithm }}'
+  name_template: '{{ .ProjectName }}.{{ .Version }}.sha256'
   algorithm: sha256
   # split: true
 signs:
