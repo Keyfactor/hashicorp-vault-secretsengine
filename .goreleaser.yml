@@ -36,11 +36,9 @@ archives:
   - format: zip
     name_template: '{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}'
 checksum:
-  extra_files:
-    - glob: 'integration-manifest.json'
-      name_template: '{{ .ProjectName }}_{{ .Version }}_manifest.json'
-  name_template: '{{ .ProjectName }}_{{ .Version }}_SHA256SUMS'
+  name_template: '{{ .ArtifactName }}.{{ .Algorithm }}'
   algorithm: sha256
+  split: true
 signs:
   - artifacts: checksum
     args:
@@ -56,8 +54,7 @@ signs:
 release:
   prerelease: auto
   extra_files:
-    - glob: 'integration-manifest.json'
-      name_template: '{{ .ProjectName }}_{{ .Version }}_manifest.json'
+    - glob: 'installation.txt'      
   # If you want to manually examine the release before its live, uncomment this line:
   draft: true
 changelog:
