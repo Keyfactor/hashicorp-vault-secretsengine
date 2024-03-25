@@ -16,7 +16,7 @@ builds:
   ldflags:
     - '-s -w -X main.version={{.Version}} -X main.commit={{.Commit}}'
   goos:
-  - freebsd
+    - freebsd
     - windows
     - linux
     - darwin
@@ -34,18 +34,17 @@ builds:
   id: "keyfactor"
   main: './cmd/keyfactor'
 archives:
-  format: zip  
-  name_template: '{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}'
-  files: 
-    - installation.txt
-    - LICENSE.txt
+  - format: binary  
+    name_template: '{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}'
+    # files: 
+    #   - installation.txt
+    #   - LICENSE.txt
 checksum:
-  ids:
-   - keyfactor
-    
-  name_template: '{{ .ProjectName }}.{{ .Version }}.sha256'
-  algorithm: sha256
-  # split: true
+  - ids:
+    - keyfactor
+    name_template: '{{ .ProjectName }}.{{ .Version }}.sha256'
+    algorithm: sha256
+    # split: true
 signs:
   - artifacts: checksum
     args:
@@ -60,8 +59,9 @@ signs:
       - "${artifact}"
 release:
   prerelease: auto
-  # extra_files:
-  #   - glob: 'installation.txt'
+  extra_files:
+    - glob: 'installation.txt'
+    - glob: 'LICENSE.txt'
   # If you want to manually examine the release before its live, uncomment this line:
   draft: true
 changelog:
