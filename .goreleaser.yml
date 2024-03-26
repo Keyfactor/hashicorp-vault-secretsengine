@@ -59,7 +59,7 @@ release:
   extra_files:
     - glob: 'installation.txt'
     - glob: 'LICENSE.txt'
-    - glob: '${{ env.BUILD_ARTIFACT_DIR }}/vault_binary_checksums.txt'
+    - glob: '${ env.BUILD_ARTIFACT_DIR }/vault_binary_checksums.txt'
   # If you want to manually examine the release before its live, uncomment this line:
   draft: true
 changelog:
