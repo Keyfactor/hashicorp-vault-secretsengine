@@ -1,0 +1,31 @@
+Note: The sha256 checksum for this build is provided along with the release.  
+Use this value for <checksum> in the below steps.
+
+sha256 checksum: <checksum>
+
+1) make sure the vault is unsealed
+
+2) make sure that $env:VAULT_ADDR is set appropriately
+   - VAULT_ADDR is the url for the instance of vault, example: http://127.0.0.1:8200
+   
+3) disable and deregister a previous version of the plugin (if installed) by running:
+	
+	> vault secrets disable <instance name>; vault plugin deregister secret <instance name>
+
+4) run the following command to register the plugin:
+
+	> vault plugin register -sha256=<checksum> -command="keyfactor.exe" secret keyfactor    
+
+** the "command" value should correspond to the name of the binary.  For Windows, this will be "keyfactor.exe", for linux this will be "keyfactor".	
+** the last parameter ("keyfactor") corresponds to the name of the instance of the secrets engine and can be set to whatever identifier you choose.
+
+5) enable the keyfactor secrets engine by running:
+
+	> vault secrets enable <instance name>
+
+6) test the connection by requesting the ca
+
+	> vault read <instance name>/ca
+
+
+where "keyfactor" is the name of the plugin instance
