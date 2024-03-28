@@ -35,7 +35,7 @@ builds:
     main: './cmd/keyfactor'
     hooks:
       post:
-        - cmd:  sh -c "echo $(echo -n {{.Target}}; echo -n ' '; sha256sum {{.Path}}) >> binary_checksums.txt"
+        - cmd:  sh -c "echo $(echo -n '{{.Goos}} {{.Goarch}} {{.Binary}}; echo -n ' '; sha256sum {{.Path}} | cut -d ' ' -f 1,2) >> binary_checksums.txt"
           dir: './dist'
 archives:
   - format: zip
