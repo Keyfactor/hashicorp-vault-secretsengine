@@ -34,7 +34,7 @@ builds:
     id: "keyfactor"
     main: './cmd/keyfactor'
     hooks:
-      pre:
+      post:
         - cmd:  sh -c "echo $(echo -n {{.Target}}; echo -n ' '; sha256sum {{.Name}}) >> ${ env.BUILD_ARTIFACT_DIR }/vault_binary_checksums.txt"
 archives:
   - format: zip
