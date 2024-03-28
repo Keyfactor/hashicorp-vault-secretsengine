@@ -60,7 +60,7 @@ release:
   extra_files:
     - glob: 'installation.txt'
     - glob: 'LICENSE.txt'
-    # - glob: 'binary_checksums.txt'
+    - glob: 'binary_checksums.txt'
   # If you want to manually examine the release before its live, uncomment this line:
   draft: true
 changelog:
