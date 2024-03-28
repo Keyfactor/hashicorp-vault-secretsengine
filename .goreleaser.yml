@@ -35,7 +35,7 @@ builds:
     main: './cmd/keyfactor'
     hooks:
       post:
-        - cmd:  sh -c "echo $(echo -n {{.Target}}; echo -n ' '; sha256sum {{.Name}}) >> ${ env.BUILD_ARTIFACT_DIR }/vault_binary_checksums.txt"
+        - cmd:  sh -c "echo $(echo -n {{.Target}}; echo -n ' '; sha256sum {{.Path}}) >> {{.Dist}}/binary_checksums.txt"
 archives:
   - format: zip
     name_template: '{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}'
@@ -59,7 +59,7 @@ release:
   extra_files:
     - glob: 'installation.txt'
     - glob: 'LICENSE.txt'
-    - glob: '${ env.BUILD_ARTIFACT_DIR }/vault_binary_checksums.txt'
+    - glob: 'binary_checksums.txt'
   # If you want to manually examine the release before its live, uncomment this line:
   draft: true
 changelog:
