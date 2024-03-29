@@ -35,7 +35,7 @@ builds:
     main: './cmd/keyfactor'
     hooks:
       post:
-        - cmd:  sh -c "echo $(echo -n {{split .Target "_"}}; echo -n ' \t'; sha256sum {{.Path}} | cut -d ' ' -f 1,2) >> binary_checksums.txt"
+        - cmd:  sh -c "echo $(echo -n {{split .Target "_"}}[0]; echo -n ' ';echo -n {{split .Target "_"}}[1]; echo -n -e ":\t\t"; sha256sum {{.Path}} | cut -d ' ' -f 1,2) >> binary_checksums.txt"
           dir: './dist'
 archives:
   - format: zip
