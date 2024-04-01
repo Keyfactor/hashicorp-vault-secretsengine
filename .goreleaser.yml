@@ -36,7 +36,7 @@ builds:
     hooks:
       post:
         # - cmd:  sh -c "echo $(echo -n '{{split .Target "_"}}'; echo -ne "\t"; sha256sum {{.Path}} | cut -d ' ' -f 1,2) >> binary_checksums.txt"
-        - cmd:  sh -c "echo $(echo -n '{{.Os}} '; echo -n '{{.Arch}}'; echo -ne "\t"; sha256sum {{.Path}} | cut -d ' ' -f 1,2) >> binary_checksums.txt"
+        - cmd:  sh -c "echo $(echo -n '{{.Os}} '; echo -ne '{{.Arch}} \t'; sha256sum {{.Path}} | cut -d ' ' -f 1,2) >> binary_checksums.txt"
           dir: './dist'
 archives:
   - format: zip
