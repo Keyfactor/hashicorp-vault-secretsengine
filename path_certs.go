@@ -341,7 +341,6 @@ func (b *keyfactorBackend) pathIssueSignCert(ctx context.Context, req *logical.R
 
 	// check the allowed domains for a match.
 	for _, v := range role.AllowedDomains {
-		// b.Logger().Warn(v)
 		if strings.HasSuffix(cn.(string), v) { // if it has the suffix..
 			hasSuffix = true
 			if cn.(string) == v || role.AllowSubdomains { // and there is an exact match, or subdomains are allowed..
