@@ -1,4 +1,10 @@
 .vs/*
-vaultSecretsEngine-update.zip
+*.zip
 vault/plugins/*
+*.sh
 *.exe
+keyfactor
+Keyfactor Vault Secrets Engine Guide.docx
+Makefile
+sample_config.json
+README.md
