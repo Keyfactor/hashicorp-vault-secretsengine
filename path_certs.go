@@ -383,15 +383,16 @@ func (b *keyfactorBackend) pathIssueSignCert(ctx context.Context, req *logical.R
 		if !valid && hasSuffix {
 			err_resp = fmt.Errorf("sub-domains not allowed for role")
 		}
+	}
 
-		b.Logger().Trace("cnMatch = " + strconv.FormatBool(cnMatch))
-		if !cnMatch {
-			err_resp = fmt.Errorf("at least one DNS SAN is required to match the supplied Common Name for RFC 2818 compliance")
-		}
+	b.Logger().Trace("cnMatch = " + strconv.FormatBool(cnMatch))
 
-		if err_resp != nil {
-			return nil, err_resp
-		}
+	if !cnMatch {
+		err_resp = fmt.Errorf("at least one DNS SAN is required to match the supplied Common Name for RFC 2818 compliance")
+	}
+
+	if err_resp != nil {
+		return nil, err_resp
 	}
 
 	//generate and submit CSR
