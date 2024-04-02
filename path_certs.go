@@ -1,3 +1,12 @@
+/*
+ *  Copyright 2024 Keyfactor
+ *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
+ *  Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions
+ *  and limitations under the License.
+ */
+
 package keyfactor
 
 import (
@@ -8,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -331,7 +341,6 @@ func (b *keyfactorBackend) pathIssueSignCert(ctx context.Context, req *logical.R
 
 	// check the allowed domains for a match.
 	for _, v := range role.AllowedDomains {
-		b.Logger().Warn(v)
 		if strings.HasSuffix(cn.(string), v) { // if it has the suffix..
 			hasSuffix = true
 			if cn.(string) == v || role.AllowSubdomains { // and there is an exact match, or subdomains are allowed..
@@ -351,10 +360,38 @@ func (b *keyfactorBackend) pathIssueSignCert(ctx context.Context, req *logical.R
 		return nil, err_resp
 	}
 
+	// check the provided DNS sans against allowed domains
+	var cnMatch = false
+	b.Logger().Trace("checking dns sans" + dns_sans[0] + ", ...")
 	for u := range dns_sans {
-		if !strings.Contains(dns_sans[u], role.AllowedBaseDomain) || strings.Contains(dns_sans[u], role.AllowedBaseDomain) && !role.AllowSubdomains {
-			return nil, fmt.Errorf("Subject Alternative Name " + dns_sans[u] + " not allowed for provided role")
+		valid = false
+		hasSuffix = false
+		cnMatch = cnMatch || dns_sans[u] == cn.(string) // check to make sure at least one of the dns_sans match the cn
+		b.Logger().Trace("checking SANs")
+		for _, v := range role.AllowedDomains {
+			if strings.HasSuffix(dns_sans[u], v) { // if it has the suffix..
+				hasSuffix = true
+				if dns_sans[u] == v || role.AllowSubdomains { // and there is an exact match, or subdomains are allowed..
+					valid = true // then it is valid
+				}
+			}
 		}
+		if !valid {
+			err_resp = fmt.Errorf("Subject Alternative Name " + dns_sans[u] + " not allowed for provided role")
+		}
+		if !valid && hasSuffix {
+			err_resp = fmt.Errorf("sub-domains not allowed for role")
+		}
+	}
+
+	b.Logger().Trace("cnMatch = " + strconv.FormatBool(cnMatch))
+
+	if !cnMatch {
+		err_resp = fmt.Errorf("at least one DNS SAN is required to match the supplied Common Name for RFC 2818 compliance")
+	}
+
+	if err_resp != nil {
+		return nil, err_resp
 	}
 
 	//generate and submit CSR
@@ -381,9 +418,6 @@ func (b *keyfactorBackend) pathIssueSignCert(ctx context.Context, req *logical.R
 }
 
 func (b *keyfactorBackend) pathRevokeCert(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
-	//path := data.Get("path").(string)
-	//b.Logger().Debug("path = " + path)
-
 	serial := data.Get("serial").(string)
 	b.Logger().Debug("serial = " + serial)
 
