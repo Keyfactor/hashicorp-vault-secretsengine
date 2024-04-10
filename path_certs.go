@@ -136,6 +136,7 @@ func (b *keyfactorBackend) pathFetchCert(ctx context.Context, req *logical.Reque
 	// this is basically handled by setting contentType or not.
 	// Errors don't cause an immediate exit, because the raw
 	// paths still need to return raw output.
+
 	b.Logger().Debug("fetching cert, path = " + req.Path)
 
 	serial = data.Get("serial").(string)
@@ -485,8 +486,8 @@ func revokeCert(ctx context.Context, b *keyfactorBackend, req *logical.Request, 
 		"Comment": "%s",
 		"EffectiveDate": "%s"},
 		"CollectionId": 0
-	  }`, keyfactorId, "via HashiCorp Vault", time.Now().UTC().String())
-	//b.Logger().Debug("Sending revocation request.  payload =  " + payload)
+	  }`, keyfactorId, "via HashiCorp Vault", time.Now().Format(time.RFC3339))
+	b.Logger().Debug("Sending revocation request.  payload =  " + payload)
 	httpReq, _ := http.NewRequest("POST", url, strings.NewReader(payload))
 
 	httpReq.Header.Add("x-keyfactor-requested-with", "APIClient")
@@ -498,10 +499,13 @@ func revokeCert(ctx context.Context, b *keyfactorBackend, req *logical.Request, 
 		b.Logger().Error("Revoke failed: {{err}}", err)
 		return nil, err
 	}
-	if res.StatusCode != 204 {
-		r, _ := io.ReadAll(res.Body)
+	r, _ := io.ReadAll(res.Body)
+
+	b.Logger().Debug("response received.  Status code " + fmt.Sprint(res.StatusCode) + " response body: \n " + string(r[:]))
+	if res.StatusCode != 204 && res.StatusCode != 200 {
+		// r, _ := io.ReadAll(res.Body)
 		b.Logger().Info("revocation failed: server returned" + fmt.Sprint(res.StatusCode))
-		b.Logger().Info("error response = " + fmt.Sprint(r))
+		b.Logger().Info("error response = " + string(r[:]))
 		return nil, fmt.Errorf("revocation failed: server returned  %s\n ", res.Status)
 	}
 
@@ -548,8 +552,8 @@ func revokeCert(ctx context.Context, b *keyfactorBackend, req *logical.Request, 
 			}
 			return logical.ErrorResponse(fmt.Sprintf("certificate with serial %s not found", serial)), nil
 		}
-		b.Logger().Info("certEntry key = " + certEntry.Key)
-		b.Logger().Info("certEntry value = " + string(certEntry.Value))
+		b.Logger().Debug("certEntry key = " + certEntry.Key)
+		b.Logger().Debug("certEntry value = " + string(certEntry.Value))
 
 		currTime := time.Now()
 		revInfo.CertificateBytes = certEntry.Value
@@ -565,7 +569,6 @@ func revokeCert(ctx context.Context, b *keyfactorBackend, req *logical.Request, 
 		if err != nil {
 			return nil, fmt.Errorf("error saving revoked certificate to new location")
 		}
-
 	}
 
 	resp := &logical.Response{
@@ -574,7 +577,7 @@ func revokeCert(ctx context.Context, b *keyfactorBackend, req *logical.Request, 
 		},
 	}
 	if !revInfo.RevocationTimeUTC.IsZero() {
-		resp.Data["revocation_time_rfc3339"] = revInfo.RevocationTimeUTC.Format(time.RFC3339Nano)
+		resp.Data["revocation_time_rfc3339"] = revInfo.RevocationTimeUTC.Format(time.RFC3339)
 	}
 	return resp, nil
 }
