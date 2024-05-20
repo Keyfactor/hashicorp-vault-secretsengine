@@ -1,3 +1,12 @@
+/*
+ *  Copyright 2024 Keyfactor
+ *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
+ *  Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions
+ *  and limitations under the License.
+ */
+
 package keyfactor
 
 import (
@@ -5,10 +14,10 @@ import (
 	"encoding/base64"
 	b64 "encoding/base64"
 	"encoding/json"
-	"encoding/pem"
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -117,8 +126,7 @@ func (b *keyfactorBackend) pathFetchCert(ctx context.Context, req *logical.Reque
 	var serial, contentType string
 	var certEntry, revokedEntry *logical.StorageEntry
 	var funcErr error
-	var certificate []byte
-	var block pem.Block
+	var certificate string
 	var revocationTime int64
 	response = &logical.Response{
 		Data: map[string]interface{}{},
@@ -128,10 +136,10 @@ func (b *keyfactorBackend) pathFetchCert(ctx context.Context, req *logical.Reque
 	// this is basically handled by setting contentType or not.
 	// Errors don't cause an immediate exit, because the raw
 	// paths still need to return raw output.
+
 	b.Logger().Debug("fetching cert, path = " + req.Path)
 
 	serial = data.Get("serial").(string)
-	pemType := "CERTIFICATE"
 
 	if len(serial) == 0 {
 		response = logical.ErrorResponse("The serial number must be provided")
@@ -156,13 +164,9 @@ func (b *keyfactorBackend) pathFetchCert(ctx context.Context, req *logical.Reque
 		goto reply
 	}
 
-	block = pem.Block{
-		Type:  pemType,
-		Bytes: certEntry.Value,
-	}
+	b.Logger().Debug("fetched certEntry.Value = ", certEntry.Value)
 
-	certificate = []byte(strings.TrimSpace(string(pem.EncodeToMemory(&block))))
-
+	certificate = string(certEntry.Value)
 	revokedEntry, funcErr = fetchCertBySerial(ctx, req, "revoked/", serial)
 	if funcErr != nil {
 		switch funcErr.(type) {
@@ -333,21 +337,62 @@ func (b *keyfactorBackend) pathIssueSignCert(ctx context.Context, req *logical.R
 
 	//check role permissions
 	var err_resp error
-	if strings.Contains(cn.(string), role.AllowedBaseDomain) && !role.AllowSubdomains {
-		err_resp = fmt.Errorf("sub-domains not allowed for role")
+	var valid bool
+	var hasSuffix bool
+
+	// check the allowed domains for a match.
+	for _, v := range role.AllowedDomains {
+		if strings.HasSuffix(cn.(string), v) { // if it has the suffix..
+			hasSuffix = true
+			if cn.(string) == v || role.AllowSubdomains { // and there is an exact match, or subdomains are allowed..
+				valid = true // then it is valid
+			}
+		}
 	}
-	if role.AllowedBaseDomain == cn.(string) {
-		err_resp = fmt.Errorf("common name not allowed for provided role")
+
+	if !valid {
+		err_resp = fmt.Errorf("common name not allowed for role")
+	}
+	if !valid && hasSuffix {
+		err_resp = fmt.Errorf("sub-domains not allowed for role")
 	}
 
 	if err_resp != nil {
 		return nil, err_resp
 	}
 
+	// check the provided DNS sans against allowed domains
+	var cnMatch = false
+	b.Logger().Trace("checking dns sans" + dns_sans[0] + ", ...")
 	for u := range dns_sans {
-		if !strings.Contains(dns_sans[u], role.AllowedBaseDomain) || strings.Contains(dns_sans[u], role.AllowedBaseDomain) && !role.AllowSubdomains {
-			return nil, fmt.Errorf("Subject Alternative Name " + dns_sans[u] + " not allowed for provided role")
+		valid = false
+		hasSuffix = false
+		cnMatch = cnMatch || dns_sans[u] == cn.(string) // check to make sure at least one of the dns_sans match the cn
+		b.Logger().Trace("checking SANs")
+		for _, v := range role.AllowedDomains {
+			if strings.HasSuffix(dns_sans[u], v) { // if it has the suffix..
+				hasSuffix = true
+				if dns_sans[u] == v || role.AllowSubdomains { // and there is an exact match, or subdomains are allowed..
+					valid = true // then it is valid
+				}
+			}
 		}
+		if !valid {
+			err_resp = fmt.Errorf("Subject Alternative Name " + dns_sans[u] + " not allowed for provided role")
+		}
+		if !valid && hasSuffix {
+			err_resp = fmt.Errorf("sub-domains not allowed for role")
+		}
+	}
+
+	b.Logger().Trace("cnMatch = " + strconv.FormatBool(cnMatch))
+
+	if !cnMatch {
+		err_resp = fmt.Errorf("at least one DNS SAN is required to match the supplied Common Name for RFC 2818 compliance")
+	}
+
+	if err_resp != nil {
+		return nil, err_resp
 	}
 
 	//generate and submit CSR
@@ -374,9 +419,6 @@ func (b *keyfactorBackend) pathIssueSignCert(ctx context.Context, req *logical.R
 }
 
 func (b *keyfactorBackend) pathRevokeCert(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
-	//path := data.Get("path").(string)
-	//b.Logger().Debug("path = " + path)
-
 	serial := data.Get("serial").(string)
 	b.Logger().Debug("serial = " + serial)
 
@@ -444,8 +486,8 @@ func revokeCert(ctx context.Context, b *keyfactorBackend, req *logical.Request, 
 		"Comment": "%s",
 		"EffectiveDate": "%s"},
 		"CollectionId": 0
-	  }`, keyfactorId, "via HashiCorp Vault", time.Now().UTC().String())
-	//b.Logger().Debug("Sending revocation request.  payload =  " + payload)
+	  }`, keyfactorId, "via HashiCorp Vault", time.Now().Format(time.RFC3339))
+	b.Logger().Debug("Sending revocation request.  payload =  " + payload)
 	httpReq, _ := http.NewRequest("POST", url, strings.NewReader(payload))
 
 	httpReq.Header.Add("x-keyfactor-requested-with", "APIClient")
@@ -457,10 +499,13 @@ func revokeCert(ctx context.Context, b *keyfactorBackend, req *logical.Request, 
 		b.Logger().Error("Revoke failed: {{err}}", err)
 		return nil, err
 	}
-	if res.StatusCode != 204 {
-		r, _ := io.ReadAll(res.Body)
+	r, _ := io.ReadAll(res.Body)
+
+	b.Logger().Debug("response received.  Status code " + fmt.Sprint(res.StatusCode) + " response body: \n " + string(r[:]))
+	if res.StatusCode != 204 && res.StatusCode != 200 {
+		// r, _ := io.ReadAll(res.Body)
 		b.Logger().Info("revocation failed: server returned" + fmt.Sprint(res.StatusCode))
-		b.Logger().Info("error response = " + fmt.Sprint(r))
+		b.Logger().Info("error response = " + string(r[:]))
 		return nil, fmt.Errorf("revocation failed: server returned  %s\n ", res.Status)
 	}
 
@@ -507,21 +552,8 @@ func revokeCert(ctx context.Context, b *keyfactorBackend, req *logical.Request, 
 			}
 			return logical.ErrorResponse(fmt.Sprintf("certificate with serial %s not found", serial)), nil
 		}
-		b.Logger().Info("certEntry key = " + certEntry.Key)
-		b.Logger().Info("certEntry value = " + string(certEntry.Value))
-		// cert, err := x509.ParseCertificate(certEntry.Value)
-		// if err != nil {
-		// 	return nil, errwrap.Wrapf("error parsing certificate: {{err}}", err)
-		// }
-		// if cert == nil {
-		// 	return nil, fmt.Errorf("got a nil certificate")
-		// }
-
-		// Add a little wiggle room because leases are stored with a second
-		// granularity
-		// if cert.NotAfter.Before(time.Now().Add(2 * time.Second)) {
-		// 	return nil, nil
-		// }
+		b.Logger().Debug("certEntry key = " + certEntry.Key)
+		b.Logger().Debug("certEntry value = " + string(certEntry.Value))
 
 		currTime := time.Now()
 		revInfo.CertificateBytes = certEntry.Value
@@ -537,16 +569,7 @@ func revokeCert(ctx context.Context, b *keyfactorBackend, req *logical.Request, 
 		if err != nil {
 			return nil, fmt.Errorf("error saving revoked certificate to new location")
 		}
-
 	}
-
-	// crlErr := buildCRL(ctx, b, req, false)
-	// switch crlErr.(type) {
-	// case errutil.UserError:
-	// 	return logical.ErrorResponse(fmt.Sprintf("Error during CRL building: %s", crlErr)), nil
-	// case errutil.InternalError:
-	// 	return nil, errwrap.Wrapf("error encountered during CRL building: {{err}}", crlErr)
-	// }
 
 	resp := &logical.Response{
 		Data: map[string]interface{}{
@@ -554,7 +577,7 @@ func revokeCert(ctx context.Context, b *keyfactorBackend, req *logical.Request, 
 		},
 	}
 	if !revInfo.RevocationTimeUTC.IsZero() {
-		resp.Data["revocation_time_rfc3339"] = revInfo.RevocationTimeUTC.Format(time.RFC3339Nano)
+		resp.Data["revocation_time_rfc3339"] = revInfo.RevocationTimeUTC.Format(time.RFC3339)
 	}
 	return resp, nil
 }

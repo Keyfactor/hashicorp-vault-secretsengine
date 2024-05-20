@@ -9,7 +9,7 @@ builds:
       # goreleaser does not work with CGO, it could also complicate
       # usage by users in CI/CD systems like Terraform Cloud where
       # they are unable to install libraries.
-      - CGO_ENABLED=0
+    - CGO_ENABLED=0
     mod_timestamp: '{{ .CommitTimestamp }}'
     flags:
       - -trimpath
@@ -28,15 +28,21 @@ builds:
     ignore:
       - goos: darwin
         goarch: '386'
-    binary: 'kfutil'
+      - goos: freebsd
+        goarch: 'arm64'
+    binary: 'keyfactor'
+    id: "keyfactor"
+    main: './cmd/keyfactor'
+    hooks:
+      post:
+        # - cmd:  sh -c "echo $(echo -n '{{split .Target "_"}}'; echo -ne "\t"; sha256sum {{.Path}} | cut -d ' ' -f 1,2) >> binary_checksums.txt"
+        - cmd:  sh -c "echo $(echo -n '{{.Os}} '; echo -n '{{.Arch}}  '; sha256sum {{.Path}} | cut -d ' ' -f 1,2) >> binary_checksums.txt"
+          dir: './dist'
 archives:
   - format: zip
     name_template: '{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}'
 checksum:
-  extra_files:
-    - glob: 'integration-manifest.json'
-      name_template: '{{ .ProjectName }}_{{ .Version }}_manifest.json'
-  name_template: '{{ .ProjectName }}_{{ .Version }}_SHA256SUMS'
+  name_template: '{{ .ProjectName }}.{{ .Version }}.sha256'
   algorithm: sha256
 signs:
   - artifacts: checksum
@@ -53,8 +59,9 @@ signs:
 release:
   prerelease: auto
   extra_files:
-    - glob: 'integration-manifest.json'
-      name_template: '{{ .ProjectName }}_{{ .Version }}_manifest.json'
+    - glob: 'installation.txt'
+    - glob: 'LICENSE.txt'
+    - glob: './dist/binary_checksums.txt'
   # If you want to manually examine the release before its live, uncomment this line:
   draft: true
 changelog:

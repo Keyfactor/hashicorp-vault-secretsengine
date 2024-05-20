@@ -1,3 +1,12 @@
+/*
+ *  Copyright 2024 Keyfactor
+ *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
+ *  Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions
+ *  and limitations under the License.
+ */
+
 package keyfactor
 
 import (
@@ -6,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"net/http"
 	"strings"
@@ -106,7 +116,7 @@ func (b *keyfactorBackend) submitCSR(ctx context.Context, req *logical.Request, 
 		return nil, "", err
 	}
 	if config == nil {
-		return nil, "", errors.New("configuration is empty.")
+		return nil, "", errors.New("configuration is empty")
 	}
 
 	ca := config.CertAuthority
@@ -148,16 +158,17 @@ func (b *keyfactorBackend) submitCSR(ctx context.Context, req *logical.Request, 
 	if res.StatusCode != 200 {
 		b.Logger().Error("CSR Enrollment failed: server returned" + fmt.Sprint(res.StatusCode))
 		defer res.Body.Close()
-		body, _ := ioutil.ReadAll(res.Body)
+		body, _ := io.ReadAll(res.Body)
 		b.Logger().Error("Error response: " + string(body[:]))
-		return nil, "", fmt.Errorf("enrollment failed: server returned  %d\n ", res.StatusCode)
+		return nil, "", fmt.Errorf("CSR Enrollment request failed with status code %d and error: "+string(body[:]), res.StatusCode)
 	}
 
 	// Read response and return certificate and key
+
 	defer res.Body.Close()
 	body, err := ioutil.ReadAll(res.Body)
 	if err != nil {
-		b.Logger().Info("Error reading response: {{err}}", err)
+		b.Logger().Error("Error reading response: {{err}}", err)
 		return nil, "", err
 	}
 
@@ -177,6 +188,8 @@ func (b *keyfactorBackend) submitCSR(ctx context.Context, req *logical.Request, 
 	serial := inner["SerialNumber"].(string)
 	kfId := inner["KeyfactorID"].(float64)
 
+	b.Logger().Debug("parsed response: ", certI...)
+
 	if err != nil {
 		b.Logger().Error("unable to parse ca_chain response", fmt.Sprint(err))
 	}
@@ -190,20 +203,26 @@ func (b *keyfactorBackend) submitCSR(ctx context.Context, req *logical.Request, 
 		b.Logger().Error("error storing the ca_chain locally", err)
 	}
 
-	err = req.Storage.Put(ctx, &logical.StorageEntry{
-		Key:   "certs/" + normalizeSerial(serial),
+	key := "certs/" + normalizeSerial(serial)
+
+	entry := &logical.StorageEntry{
+		Key:   key,
 		Value: []byte(certs[0]),
-	})
+	}
+
+	b.Logger().Debug("cert entry.Value = ", string(entry.Value))
+
+	err = req.Storage.Put(ctx, entry)
 	if err != nil {
 		return nil, "", errwrap.Wrapf("unable to store certificate locally: {{err}}", err)
 	}
 
-	entry, err := logical.StorageEntryJSON("kfId/"+normalizeSerial(serial), kfId)
+	kfIdEntry, err := logical.StorageEntryJSON("kfId/"+normalizeSerial(serial), kfId)
 	if err != nil {
 		return nil, "", err
 	}
 
-	err = req.Storage.Put(ctx, entry)
+	err = req.Storage.Put(ctx, kfIdEntry)
 	if err != nil {
 		return nil, "", errwrap.Wrapf("unable to store the keyfactor ID for the certificate locally: {{err}}", err)
 	}
