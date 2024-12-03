@@ -1,3 +1,4 @@
+
 # keyfactor-vault-secrets-engine
 
 A Vault plugin that allows Vault to use Keyfactor Command as a CA and issue certificates.
@@ -10,17 +11,16 @@ This API client allows for programmatic management of Keyfactor resources.
 
 ## Support for keyfactor-vault-secrets-engine
 
-keyfactor-vault-secrets-engine is open source and community supported, meaning that there is no support guaranteed from
-Keyfactor Support for these tools.
+keyfactor-vault-secrets-engine is open source and community supported, meaning that there is no support guaranteed from Keyfactor Support for these tools.
 
-###### To report a problem or suggest a new feature, use the **[Issues](../../issues)
-** tab. If you want to contribute actual bug fixes or proposed enhancements, use the **[Pull requests](../../pulls)
-** tab.
+###### To report a problem or suggest a new feature, use the **[Issues](../../issues)** tab. If you want to contribute actual bug fixes or proposed enhancements, use the **[Pull requests](../../pulls)** tab.
 
 ---
 
 
 ---
+
+
 
 # Hashicorp Vault Secrets Engine
 
@@ -154,11 +154,11 @@ document.
 - An adequate number of unseal keys to meet the minimum criteria to unseal the Hashicorp Vault
 - A Hashicorp Vault login token
 
-## Installation - Keyfactor Command
+## Installation - Keyfactor
 
-### Create the Keyfactor Command service account or oAuth client
+### Create the Active Directory service account or oAuth client
 
-For the purposes of this document, we will not go into the details of how to create a service account user since this
+For the purposes of this document, we will not go into the details of how to create an Active Directory user since this
 process can vary widely, however, here are a couple of things to consider:
 
 - Ensure that the user does not have an expiring password, or if it does, ensure that the password resets are managed
@@ -450,16 +450,47 @@ The values that will need to be set are the following:
 
 - url
     - The url pointing to the keyfactor platform with no trailing slashes **(example: "https://kftrain.keyfactor.lab")**
-- username
-    - The username of the account used for authenticating to the platform including the domain **(example: "
-      KEYFACTOR\VaultUser")**
-- password
-    - The password corresponding to the user account for authenticating to the platform.
 - ca
     - The certificate authority used when issuing certificates via the plugin **(example:
       kftrain.keyfactor.lab\\\\keyfactor-KFTRAIN-CA)**
 - template
     - The certificate template name to use when issuing certificates. It should be issuable by the CA
+
+#### Basic Authentication Configuration
+
+If you are using basic authentication to Keyfactor Command, you will also need to set the following values:
+
+- username
+    - The username of the account used for authenticating to the platform including the domain **(example: "
+      KEYFACTOR\VaultUser")**
+- password
+    - The password corresponding to the user account for authenticating to the platform.
+
+#### oAuth2 Configuration
+
+##### Client Credentials Grant
+
+If you are using the client credentials grant to authenticate to Keyfactor Command, you will also need to set the
+following values:
+
+- client_id
+    - The client ID of the oAuth2 client used for authenticating to the platform
+- client_secret
+    - The client secret corresponding to the oAuth2 client for authenticating to the platform
+- token_url
+    - The URL to the oAuth2 token endpoint for the platform
+- scopes
+    - The scopes of the oAuth2 client
+- audience
+    - The audience of the oAuth2 client
+
+##### Access Token
+
+If you are using a static access token to authenticate to Keyfactor Command, you will also need to set the following
+value:
+
+- access_token
+    - The access token used for authenticating to the platform
 
 Once you've set the configuration properties, run the command:
 `vault read <instance name>/config`
@@ -634,4 +665,5 @@ instance of the plugin is named "keyfactor".
 ### Read CA chain
 
 `vault read keyfactor/ca_chain`
+
 
