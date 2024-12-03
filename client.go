@@ -11,11 +11,11 @@ package keyfactor
 
 import (
 	"errors"
-	"fmt"
 	"log"
 	"strings"
 
-	"github.com/Keyfactor/keyfactor-go-client/api"
+	"github.com/Keyfactor/keyfactor-auth-client-go/auth_providers"
+	"github.com/Keyfactor/keyfactor-go-client/v3/api"
 )
 
 type keyfactorClient struct {
@@ -27,33 +27,58 @@ func newClient(config *keyfactorConfig) (*api.Client, error) {
 		return nil, errors.New("client configuration was nil")
 	}
 
-	if config.Username == "" {
-		return nil, errors.New("client username was not defined")
-	}
-
-	if config.Password == "" {
-		return nil, errors.New("client password was not defined")
-	}
-
 	if config.KeyfactorUrl == "" {
 		return nil, errors.New("client URL was not defined")
 	}
-	username := strings.Split(config.Username, "//")[1]
-	domain := strings.Split(config.Username, "//")[1]
 	hostname := config.KeyfactorUrl
 	if strings.HasPrefix(config.KeyfactorUrl, "http") {
 		hostname = strings.Split(config.KeyfactorUrl, "//")[1] //extract just the domain
 	}
 
-	var clientAuth api.AuthConfig
-	clientAuth.Username = username
-	clientAuth.Password = config.Password
-	clientAuth.Domain = domain
-	clientAuth.Hostname = hostname
+	isBasicAuth := config.Username != "" && config.Password != ""
+	isOAuth := (config.ClientId != "" && config.ClientSecret != "" && config.TokenUrl != "") || config.AccessToken != ""
 
-	fmt.Printf("clientAuth values: \n %s", clientAuth)
+	if !isBasicAuth && !isOAuth {
+		return nil, errors.New(
+			"invalid Keyfactor Command client configuration, " +
+				"please provide a valid Basic auth or OAuth configuration",
+		)
+	}
 
-	c, err := api.NewKeyfactorClient(&clientAuth)
+	serverConfig := &auth_providers.Server{}
+	if isBasicAuth {
+		basicAuthConfig := &auth_providers.CommandAuthConfigBasic{}
+		_ = basicAuthConfig.WithCommandHostName(hostname).
+			WithCommandAPIPath(config.CommandAPIPath)
+
+		bErr := basicAuthConfig.
+			WithUsername(config.Username).
+			WithPassword(config.Password).
+			Authenticate()
+
+		if bErr != nil {
+			return nil, bErr
+		}
+		serverConfig = basicAuthConfig.GetServerConfig()
+	} else if isOAuth {
+		oauthConfig := &auth_providers.CommandConfigOauth{}
+		_ = oauthConfig.WithCommandHostName(hostname).
+			WithCommandAPIPath(config.CommandAPIPath)
+
+		oErr := oauthConfig.
+			WithClientId(config.ClientId).
+			WithClientSecret(config.ClientSecret).
+			WithTokenUrl(config.TokenUrl).
+			WithAccessToken(config.AccessToken).
+			Authenticate()
+
+		if oErr != nil {
+			return nil, oErr
+		}
+		serverConfig = oauthConfig.GetServerConfig()
+	}
+
+	c, err := api.NewKeyfactorClient(serverConfig, nil)
 	if err != nil {
 		log.Fatalf("[ERROR] creating Keyfactor client: %s", err)
 	}
