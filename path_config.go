@@ -24,11 +24,18 @@ const (
 // keyfactorConfig includes the minimum configuration
 // required to instantiate a new Keyfactor connection.
 type keyfactorConfig struct {
-	KeyfactorUrl  string `json:"url"`
-	Username      string `json:"username"`
-	Password      string `json:"password"`
-	CertTemplate  string `json:"template"`
-	CertAuthority string `json:"ca"`
+	KeyfactorUrl   string   `json:"url"`
+	CommandAPIPath string   `json:"api_path"`
+	Username       string   `json:"username"`
+	Password       string   `json:"password"`
+	ClientId       string   `json:"client_id"`
+	ClientSecret   string   `json:"client_secret"`
+	TokenUrl       string   `json:"token_url"`
+	AccessToken    string   `json:"access_token"`
+	Scopes         []string `json:"scopes"`
+	Audience       string   `json:"audience"`
+	CertTemplate   string   `json:"template"`
+	CertAuthority  string   `json:"ca"`
 }
 
 func (b *keyfactorBackend) config(ctx context.Context, s logical.Storage) (*keyfactorConfig, error) {
@@ -70,13 +77,54 @@ func pathConfig(b *keyfactorBackend) []*framework.Path {
 			Fields: map[string]*framework.FieldSchema{
 				"username": {
 					Type:        framework.TypeString,
-					Description: "The Keyfactor user name for authenticating with the platform.",
-					Required:    true,
+					Description: "The username for authenticating with Keyfactor Command using `Basic` auth.",
+					Required:    false,
 				},
 				"password": {
 					Type:        framework.TypeString,
-					Description: "The password for the Keyfactor account used for authenticating.",
-					Required:    true,
+					Description: "The password for authenticating with Keyfactor Command using `Basic` auth.",
+					Required:    false,
+					DisplayAttrs: &framework.DisplayAttributes{
+						Sensitive: true,
+					},
+				},
+				"client_id": {
+					Type: framework.TypeString,
+					Description: "The client ID for authenticating with Keyfactor Command using `OAuth2` client" +
+						" credentials.",
+					Required: false,
+				},
+				"client_secret": {
+					Type: framework.TypeString,
+					Description: "The client secret for authenticating with Keyfactor Command using `OAuth2` client" +
+						" credentials.",
+					Required: false,
+					DisplayAttrs: &framework.DisplayAttributes{
+						Sensitive: true,
+					},
+				},
+				"token_url": {
+					Type: framework.TypeString,
+					Description: "The token URL for authenticating with Keyfactor Command using `OAuth2` client" +
+						" credentials.",
+					Required: false,
+				},
+				"scopes": {
+					Type: framework.TypeCommaStringSlice,
+					Description: "The scopes for authenticating with Keyfactor Command using `OAuth2` client" +
+						" credentials.",
+					Required: false,
+				},
+				"audience": {
+					Type: framework.TypeString,
+					Description: "The audience for authenticating with Keyfactor Command using `OAuth2` client" +
+						" credentials.",
+					Required: false,
+				},
+				"access_token": {
+					Type:        framework.TypeString,
+					Description: "The access token for authenticating with Keyfactor Command using `OAuth2`",
+					Required:    false,
 					DisplayAttrs: &framework.DisplayAttributes{
 						Sensitive: true,
 					},
@@ -85,6 +133,12 @@ func pathConfig(b *keyfactorBackend) []*framework.Path {
 					Type:        framework.TypeString,
 					Description: "The URL for the Keyfactor platform.",
 					Required:    true,
+				},
+				"api_path": {
+					Type:        framework.TypeString,
+					Description: "The API path for the Keyfactor platform.",
+					Required:    false,
+					Default:     "KeyfactorAPI",
 				},
 				"template": {
 					Type:        framework.TypeString,
@@ -111,7 +165,11 @@ func pathConfig(b *keyfactorBackend) []*framework.Path {
 }
 
 // pathConfigExistenceCheck verifies if the configuration exists.
-func (b *keyfactorBackend) pathConfigExistenceCheck(ctx context.Context, req *logical.Request, data *framework.FieldData) (bool, error) {
+func (b *keyfactorBackend) pathConfigExistenceCheck(
+	ctx context.Context,
+	req *logical.Request,
+	data *framework.FieldData,
+) (bool, error) {
 	out, err := req.Storage.Get(ctx, req.Path)
 	if err != nil {
 		return false, fmt.Errorf("existence check failed: %w", err)
@@ -121,7 +179,11 @@ func (b *keyfactorBackend) pathConfigExistenceCheck(ctx context.Context, req *lo
 }
 
 // pathConfigRead reads the configuration and outputs non-sensitive information.
-func (b *keyfactorBackend) pathConfigRead(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+func (b *keyfactorBackend) pathConfigRead(
+	ctx context.Context,
+	req *logical.Request,
+	data *framework.FieldData,
+) (*logical.Response, error) {
 	config, err := b.config(ctx, req.Storage)
 	if err != nil {
 		return nil, err
@@ -132,25 +194,43 @@ func (b *keyfactorBackend) pathConfigRead(ctx context.Context, req *logical.Requ
 
 	return &logical.Response{
 		Data: map[string]interface{}{
-			"url":      config.KeyfactorUrl,
-			"username": config.Username,
-			"password": config.Password,
-			"CA":       config.CertAuthority,
-			"template": config.CertTemplate,
+			"url":           config.KeyfactorUrl,
+			"api_path":      config.CommandAPIPath,
+			"username":      config.Username,
+			"password":      config.Password,
+			"client_id":     config.ClientId,
+			"client_secret": config.ClientSecret,
+			"token_url":     config.TokenUrl,
+			"scopes":        config.Scopes,
+			"audience":      config.Audience,
+			"access_token":  config.AccessToken,
+			"CA":            config.CertAuthority,
+			"template":      config.CertTemplate,
 		},
 	}, nil
 }
 
 // pathConfigWrite updates the configuration for the backend
-func (b *keyfactorBackend) pathConfigWrite(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+func (b *keyfactorBackend) pathConfigWrite(
+	ctx context.Context,
+	req *logical.Request,
+	data *framework.FieldData,
+) (*logical.Response, error) {
 	b.Logger().Debug("Calling pathConfigWrite")
 
 	newConfig := &keyfactorConfig{
-		KeyfactorUrl:  data.Get("url").(string),
-		Username:      data.Get("username").(string),
-		Password:      data.Get("password").(string),
-		CertAuthority: data.Get("ca").(string),
-		CertTemplate:  data.Get("template").(string),
+		KeyfactorUrl:   data.Get("url").(string),
+		Username:       data.Get("username").(string),
+		Password:       data.Get("password").(string),
+		CertAuthority:  data.Get("ca").(string),
+		CertTemplate:   data.Get("template").(string),
+		CommandAPIPath: data.Get("api_path").(string),
+		ClientId:       data.Get("client_id").(string),
+		ClientSecret:   data.Get("client_secret").(string),
+		TokenUrl:       data.Get("token_url").(string),
+		AccessToken:    data.Get("access_token").(string),
+		Scopes:         data.Get("scopes").([]string),
+		Audience:       data.Get("audience").(string),
 	}
 
 	// Check if the config already exists, to determine if this is a create or
@@ -213,7 +293,11 @@ func (b *keyfactorBackend) pathConfigWrite(ctx context.Context, req *logical.Req
 }
 
 // pathConfigDelete removes the configuration for the backend
-func (b *keyfactorBackend) pathConfigDelete(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+func (b *keyfactorBackend) pathConfigDelete(
+	ctx context.Context,
+	req *logical.Request,
+	data *framework.FieldData,
+) (*logical.Response, error) {
 	err := req.Storage.Delete(ctx, configPath)
 
 	if err == nil {
