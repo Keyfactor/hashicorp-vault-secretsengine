@@ -7,7 +7,7 @@
  *  and limitations under the License.
  */
 
-package keyfactor
+package kfbackend
 
 import (
 	"context"
@@ -69,7 +69,7 @@ func pathCerts(b *keyfactorBackend) []*framework.Path {
 			HelpSynopsis:    pathSignHelpSyn,
 			HelpDescription: pathSignHelpDesc,
 			Fields: addNonCACommonFields(map[string]*framework.FieldSchema{
-				"csr": &framework.FieldSchema{
+				"csr": {
 					Type:        framework.TypeString,
 					Default:     "",
 					Description: `PEM-format CSR to be signed.`,
@@ -225,6 +225,7 @@ reply:
 // subject to role restrictions
 func (b *keyfactorBackend) pathIssue(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 	roleName := data.Get("role").(string)
+	b.Logger().Debug(fmt.Sprintf("got role name of %s", roleName))
 
 	// Get the role
 	role, err := b.getRole(ctx, req.Storage, roleName)
@@ -329,8 +330,14 @@ func (b *keyfactorBackend) pathIssueSignCert(ctx context.Context, req *logical.R
 	}
 
 	caName := data.Get("ca").(string)
+	if caName == "" {
+		caName = b.cachedConfig.CertAuthority
+	}
 
 	templateName := data.Get("template").(string)
+	if templateName == "" {
+		templateName = b.cachedConfig.CertTemplate
+	}
 
 	b.Logger().Debug("CA Name parameter = " + caName)
 	b.Logger().Debug("Template name parameter = " + templateName)
@@ -448,7 +455,7 @@ func revokeCert(ctx context.Context, b *keyfactorBackend, req *logical.Request, 
 		return nil, nil
 	}
 
-	config, err := b.config(ctx, req.Storage)
+	config, err := b.fetchConfig(ctx, req.Storage)
 	if err != nil {
 		return nil, err
 	}

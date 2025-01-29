@@ -7,7 +7,7 @@
  *  and limitations under the License.
  */
 
-package keyfactor
+package kfbackend
 
 import (
 	"context"

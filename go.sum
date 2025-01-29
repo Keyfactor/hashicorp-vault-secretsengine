@@ -5,6 +5,8 @@ github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03
 github.com/DataDog/datadog-go v3.2.0+incompatible/go.mod h1:LButxg5PwREeZtORoXG3tL4fMGNddJ+vMq1mwgfaqoQ=
 github.com/Keyfactor/keyfactor-auth-client-go v1.0.0-rc.2 h1:/61pAEjAhTAGtFCvAcp04qEZWV9pMYH5fxADReN2KdU=
 github.com/Keyfactor/keyfactor-auth-client-go v1.0.0-rc.2/go.mod h1:UTPLARTONwfc+j1y2SjEa54gbFFCObQucHf3ubQVyDk=
+github.com/Keyfactor/keyfactor-go-client-sdk v1.0.2 h1:caLlzFCz2L4Dth/9wh+VlypFATmOMmCSQkCPKOKMxw8=
+github.com/Keyfactor/keyfactor-go-client-sdk v1.0.2/go.mod h1:Z5pSk8YFGXHbKeQ1wTzVN8A4P/fZmtAwqu3NgBHbDOs=
 github.com/Keyfactor/keyfactor-go-client/v3 v3.0.0 h1:yMChWRnnxmcgLt6kEQ3FZfteps05v/qot5KXLXxa6so=
 github.com/Keyfactor/keyfactor-go-client/v3 v3.0.0/go.mod h1:HWb+S60YAALFVSfB8QuQ8ugjsjr+FHLQET0/4K7EVWw=
 github.com/Microsoft/go-winio v0.4.15-0.20190919025122-fc70bd9a86b5/go.mod h1:tTuCMEN+UleMWgg9dVx4Hu52b1bJo+59jBh3ajtinzw=

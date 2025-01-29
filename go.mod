@@ -14,6 +14,7 @@ require (
 )
 
 require (
+	github.com/Keyfactor/keyfactor-go-client-sdk v1.0.2 // indirect
 	github.com/armon/go-metrics v0.3.3 // indirect
 	github.com/armon/go-radix v1.0.0 // indirect
 	github.com/cenkalti/backoff/v3 v3.0.0 // indirect
