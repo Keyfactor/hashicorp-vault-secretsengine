@@ -35,9 +35,8 @@ commands to request certificates from Keyfactor and allows security teams to mai
 certificates issued to Vault instances.
 This plugin connects Vault with trusted public, private, or cloud-hosted CAs configured in the Keyfactor platform.
 Certificates are requested through Vault using standard Vault commands, and are then redirected to Keyfactor so that the
-certificates can be issued off of a trusted enterprise
-certificate authority. After issuance, the certificate is then returned to Hashicorp Vault and stored within the Vault
-Secrets store to then be used in other applications.
+certificates can be issued off of a trusted enterprise certificate authority. After issuance, the certificate is then 
+returned to Hashicorp Vault and stored within the Vault Secrets store to then be used in other applications.
 
 ---
 
@@ -156,15 +155,23 @@ document.
 
 ## Installation - Keyfactor
 
-### Create the Active Directory service account or oAuth client
+### Create the Service Account in Command
 
-For the purposes of this document, we will not go into the details of how to create an Active Directory user since this
-process can vary widely, however, here are a couple of things to consider:
+This plugin can authenticate via username/password, TLS certificate authentication, and oAuth/openIDConnect.  
 
-- Ensure that the user does not have an expiring password, or if it does, ensure that the password resets are managed
-  carefully. Expiration of this password could result in production outages with the plugin.
-- Ensure that the user does not have logon time restrictions unless you only want the Hashicorp Vault plugin to function
-  during specific timeframes.
+For the purposes of this document, we will not go into the details of how to create each type of service entity.
+Refer to the Keyfactor platform documentation for guidance on creating these service accounts. 
+
+The configuration of the plugin will differ slightly for each different approach.  Here is a table with the values 
+needed for authentication for each approach:
+
+| basic | oAuth | TLS |
+| ----------------- | ----- | --- |
+| Username          | Client ID | Certificate Path |
+| Password          | Client Secret | |
+| AD Domain         | Token Endpoint | |
+
+These values will be discussed in greater detail in the [Configure the plugin](#configure-the-plugin) section of this document.
 
 ### Assign the user permissions in Keyfactor Command
 
@@ -177,89 +184,14 @@ document.
 ### Create a certificate template
 
 The first step to configuring Keyfactor is to create the certificate template that will be used for the enrollment and
-publish it into Keyfactor.
+publish it into Keyfactor.  This template can be created in Active Directory for AD based Certificate Authorities, or created as 
+Certificate Profiles in EJBCA and imported into Command.
 
-**To create a new certificate template and import into Keyfactor:**
+Refer to the Keyfactor Command documentation for instructions on how to create a Certificate Template in Command.
 
-1. Open up the Certificate Authority MMC console.
+### Allow the template to be used for CSR enrollment through Keyfactor
 
-1. Right Click on Certificate Templates, and select "Manage". This will open up the Certifcate Templates MMC
-   console.
-
-1. In the Certificate Templates MMC console, choose a template that you would like to use as a starting point for
-   your new Vault Plugin template, and duplicate it as a starting point. For standard SSL certificates, most companies
-   will start with a template such as "Web Server" for a general template. In situations where you
-   need the certificate to do mutual TLS authentication, you may wish to choose the Computer template so that it will
-   include both the Client Authentication and Server Authentication key usages. To duplicate the template, right click
-   on the template and select "Duplicate Template".
-
-1. You should now see the properties for the new template you are creating, and you will need to customize the
-   template for use with the plugin. In most cases, there will be only a few minor changes that need made to the
-   template.
-
-    1. On the General tab, change the Template Display Name to represent the name that you want to have on the template.
-
-       !["template1"](images/template1.png)
-
-    1. On the General tab, set the Validity Period and Renewal Period for the certificates that you are going to issue
-       off of this template.
-
-       !["template2"](images/template2.png)
-
-   > Validity and Renewal period values depend on use case and organizational policy.
-
-    1. On the Request Handling tab, ensure that the option is selected for "Allow Private Keys to be Exported"
-
-       !["template3"](images/template3.png)
-
-    1. Unless you are planning to implement an approval workflow process for the certificates issued through Hashicorp
-       Vault, ensure that "CA Certificate Manager Approval" is not checked on the Issuance Requirements tab.
-
-       !["template4"](images/template4.png)
-
-    1. On the Security tab, add the service account that was created earlier so that it has permissions to enroll
-       certificates off of this template. Click Add to search for the user to add, and then grant the user READ and
-       ENROLL permissions on the Template.
-
-       !["template5"](images/template5.png)
-
-    1. Click OK to save the template.
-
-### Publish the template for the Certificate Authority
-
-It is now necessary to take the certificate template that you created and publish it so that it is an available template
-for issuance off of the CA.
-
-**To publish the template**:
-
-1. Open the Certificate Authority MMC console
-1. Right-click on Certificate Templates in the left hand pane and select NEW – Certificate Template to Issue
-   !["template6"](images/template6.png)
-
-1. Select the template that was created in the previous step, and then click OK.
-   !["template7"](images/template7.png)
-
-### Import the new template into the Keyfactor console
-
-Now that the new certificate template has been created on the CA, we need to ensure that the template is available for
-issuance within the Keyfactor Command console.
-
-**To import the certificate template**:
-
-1. Log into the Keyfactor Command console as a user with administrative privileges
-
-1. Select "Locations" from the top menu bar, then select "Certificate Templates"
-   !["template8"](images/template8.png)
-
-1. Click the "Import Templates" button at the top of the screen
-   !["template9"](images/template9.png)
-
-1. Select the Active Directory Forest where you created the template, and then click "Import Templates"
-   !["template10"](images/template10.png)
-
-### Enable the template for CSR enrollment through Keyfactor
-
-Once the template has been imported into Keyfactor Command, it is then necessary to enable that template for PFX
+Once the template has been imported into Keyfactor Command, it is then necessary to enable that template for CSR
 enrollment through the console.
 
 To enable CSR enrollment on the template:
@@ -406,11 +338,11 @@ you may or may not be able to access certain paths.
     ^ca_chain(/pem)?$
         Fetch a CA, CRL, CA Chain, or non-revoked certificate.
 
-    ^cert/(?P<serial>[0-9A-Fa-f-:]+)$
-        Fetch a CA, CRL, CA Chain, or non-revoked certificate.
-
     ^certs/?$
         Use with the "list" command to display the list of certificate serial numbers for certificates managed by this secrets engine.
+
+    ^certs/(?P<serial>[0-9A-Fa-f-:]+)$
+        Fetch a CA, CRL, CA Chain, or non-revoked certificate.
 
     ^config$
         Configure the Keyfactor Secrets Engine backend.
@@ -422,11 +354,11 @@ you may or may not be able to access certain paths.
     ^revoke/(?P<serial>[0-9A-Fa-f-:]+)$
         Revoke a certificate by serial number.
 
-    ^roles/(?P<name>\w(([\w-.]+)?\w)?)$
-        Manage the roles that can be created with this backend.
-
     ^roles/?$
         List the existing roles in this backend
+
+    ^roles/(?P<name>\w(([\w-.]+)?\w)?)$
+        Manage the roles that can be created with this backend.
 
     ^sign/(?P<role>\w(([\w-.]+)?\w)?)$
         Request certificates using a certain role with the provided details.
@@ -434,69 +366,83 @@ you may or may not be able to access certain paths.
 
 ```
 
+If you see this, you have successfully installed the plugin.  Now we can configure it for connecting with Command for certificate enrollment.
+
 ### Configure the plugin
 
 Once the plugin has been successfully installed, the next step is to set the configuration values that will allow it to
 interact with the Keyfactor platform.
 
 The Keyfactor plugin implements a per-instance configuration which allows multiple instances of the plugin to exist
-simultaneously. This is useful in cases where you want to manage multiple certificate authorities or templates.
+simultaneously. This could be useful for creating multiple instances of the plugin; each scoped to a specific Command service account identity that 
+is specific to a particular issuance workflow.
 
 To set a configuration value:
 
 `vault write <instance name>/config <key>="<value>"`
 
-The values that will need to be set are the following:
+Here is a table of the available configuration paramaters
+| name | value type | required | default | description |
+| ---- | ---------- | -------- | ------- | ----------- |
+| **url**  | string     | yes      | | The url pointing to the keyfactor platform with no trailing slashes **(example: "https://kftrain.keyfactor.lab")** |
+| **api_path** | string | no       | _"KeyfactorAPI"_ | The path after the Command instance url to reach the Keyfactor API |
+| **ca**    | string | no[^1]      | |  | The certificate authority used when issuing certificates via the plugin **(example: kftrain.keyfactor.lab\\\\keyfactor-KFTRAIN-CA)** |
+| **template** | string | no[^1]   | | The certificate template name to use when issuing certificates. It should be issuable by the CA |
+| **username** | string | no[^2]   | | basic authentication: username |
+| **domain** | string | no[^2]     | | basic authentication: Active Directory Domain |
+| **password** | string | no[^2]   | | basic authentication: password |
+| **client_id** | string | no[^3]  | | oAuth authentication: client ID |
+| **client_secret** | string | no[^3] | |oAuth authentication: Client Secret |
+| **token_url** | string | no[^3]  | | oAuth authentication: Endpoint for retreiving the authentication token |
+| **access_token** | string | no   | | oAuth access token, if retrieved outside the context of the plugin |
+| **scopes** | []string (comma separated list) | no | | the defined scopes to apply to the retreived token in the oAuth authorization flow.  If not provided, all available scopes for the service account will be assigned to the token upon authentication |
+| **audience** | []string (comma seperated list) | no | | the OpenID Connect v1.0 or oAuth v2.0 token audience |
+| **skip_verify** | bool | no | _false_ | set this to true to skip checking the CRL list of the HTTPS endpoint |
+| **command_cert_path** | string | no | | set this value to the local path of the CA cert if it is untrusted by the client and skip_verify is false
 
-- url
-    - The url pointing to the keyfactor platform with no trailing slashes **(example: "https://kftrain.keyfactor.lab")**
-- ca
-    - The certificate authority used when issuing certificates via the plugin **(example:
-      kftrain.keyfactor.lab\\\\keyfactor-KFTRAIN-CA)**
-- template
-    - The certificate template name to use when issuing certificates. It should be issuable by the CA
+[^1]: The **ca** and **template** fields can be provided via command line parameters.  If they are not provided, the plugin will default to what is set in the configuration values.  If neither are available an error will occur.
 
 #### Basic Authentication Configuration
 
 If you are using basic authentication to Keyfactor Command, you will also need to set the following values:
 
-- username
-    - The username of the account used for authenticating to the platform including the domain **(example: "
-      KEYFACTOR\VaultUser")**
-- password
+- **domain**
+    - The Active Directory domain of the account **(example: "KEYFACTOR")**
+- **username**
+    - The username of the account used for authenticating to the platform excluding the domain **(example: "VaultUser")**
+- **password**
     - The password corresponding to the user account for authenticating to the platform.
 
-#### oAuth2 Configuration
+[^2]: While none of these configuration values are explicitly required; they are _all_ required in order to use basic (username/password) authentication into Command.
 
-##### Client Credentials Grant
+#### OpenID Connect / oAuth Configuration
 
-If you are using the client credentials grant to authenticate to Keyfactor Command, you will also need to set the
-following values:
+If you are using an oAuth or OpenID Connect provider to authenticate into Keyfactor Command, you will also need to set the following values:
+- **client_id**
+    - The client ID of the service principal account used to authenticate
 
-- client_id
-    - The client ID of the oAuth2 client used for authenticating to the platform
-- client_secret
-    - The client secret corresponding to the oAuth2 client for authenticating to the platform
-- token_url
-    - The URL to the oAuth2 token endpoint for the platform
-- scopes
-    - The scopes of the oAuth2 client
-- audience
-    - The audience of the oAuth2 client
+- **client_secret**
+    - The client secret value generated via the identity provider when the service account was created 
+
+- **token_url**
+    - The url where the token can be requested
+
+[^3]: While none of these configuration values are explicitly required; they are _all_ required in order to use openID Connect / oAuth authentication into Command.
 
 ##### Access Token
 
-If you are using a static access token to authenticate to Keyfactor Command, you will also need to set the following
-value:
-
-- access_token
-    - The access token used for authenticating to the platform
+Rather than have the plugin perform the oAuth/OpenID authentication workflow, it is also possible to retreive the access token yourself and provide it in the configuration.
+If a valid access token is provided then the values for **client_id**, **client_secret** or **token_url** are not required.
 
 Once you've set the configuration properties, run the command:
 `vault read <instance name>/config`
 in order to view the configuration settings (see example below).
 
 !["configread"](images/configread.png)
+
+> [!NOTE]
+> By default the sensitive values (password, client_secret) are hidden.  To show these, pass the "show_hidden=true" parameter to the request; `vault read <instance name>/config show_hidden=true`
+
 
 ### Adding Roles
 
@@ -509,7 +455,10 @@ To create a role, use the vault write command as in the below example.
 This will create a role called "hashiwebserver" that can be used to generate certificates for domains ending with "
 kftrain.lab".
 
-These properties can also be set in the certificate template. If they differ, the most restrictive setting is applied.
+> [!NOTE]
+> Use "*" for the value in "allowed_domains" to allow issuing for any domain.
+
+These properties can also be set in the certificate template configured in Command. If they differ, the most restrictive setting is applied.
 
 ## Using the plugin
 
@@ -622,7 +571,7 @@ instance of the plugin is named "keyfactor".
 
 ### Create/update role
 
-`vault write keyfactor/roles/<rolename> allowed_domains=<domain1>,<domain2> allow_subdomains=true`
+`vault write keyfactor/roles/<rolename> allowed_domains="<domain1>,<domain2>" allow_subdomains=true`
 
 ### List roles
 
@@ -646,7 +595,7 @@ instance of the plugin is named "keyfactor".
 
 ### Read certificate
 
-`vault read keyfactor/cert/<serial number>`
+`vault read keyfactor/certs/<serial number>`
 
 > Note: Certificate serial numbers are provided in the output for enrollment and list commands
 
