@@ -12,7 +12,6 @@ package kfbackend
 import (
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 
 	"github.com/Keyfactor/keyfactor-auth-client-go/auth_providers"
@@ -22,7 +21,7 @@ type keyfactorClient struct {
 	httpClient *http.Client
 }
 
-func newClient(config *keyfactorConfig) (*keyfactorClient, error) {
+func newClient(config *keyfactorConfig, b *keyfactorBackend) (*keyfactorClient, error) {
 	client := new(keyfactorClient)
 
 	if config == nil {
@@ -49,6 +48,8 @@ func newClient(config *keyfactorConfig) (*keyfactorClient, error) {
 	basicAuthConfig := &auth_providers.CommandAuthConfigBasic{}
 
 	if isBasicAuth {
+		b.Logger().Debug(fmt.Sprintf("using basic auth with username %s, domain %s and password (hidden)", config.Username, config.Domain))
+
 		basicAuthConfig.WithCommandHostName(hostname).
 			WithCommandAPIPath(config.CommandAPIPath).
 			WithSkipVerify(config.SkipTLSVerify).
@@ -61,20 +62,22 @@ func newClient(config *keyfactorConfig) (*keyfactorClient, error) {
 
 		if bErr != nil {
 			errMsg := fmt.Sprintf("[ERROR] unable to authenticate with provided basic auth credentials: %s", bErr.Error())
-			log.Fatal(errMsg)
+			b.Logger().Error(errMsg)
 			return nil, bErr
+		} else {
+			b.Logger().Debug("successfully authenticated using basic auth")
 		}
 
 		client.httpClient, bErr = basicAuthConfig.GetHttpClient()
 
 		if bErr != nil {
 			errMsg := fmt.Sprintf("[ERROR] there was an error retreiving the basic auth http client: %s", bErr.Error())
-			log.Fatal(errMsg)
+			b.Logger().Error(errMsg)
 			return nil, bErr
 		}
 
 	} else if isOAuth {
-
+		b.Logger().Debug(fmt.Sprintf("using oAuth authentication with client_id: %s, token_url %s and client_secret: (hidden)", config.ClientId, config.TokenUrl))
 		_ = oAuthConfig.WithCommandHostName(hostname).
 			WithCommandAPIPath(config.CommandAPIPath).
 			WithSkipVerify(config.SkipTLSVerify).
@@ -89,14 +92,14 @@ func newClient(config *keyfactorConfig) (*keyfactorClient, error) {
 
 		if oErr != nil {
 			errMsg := fmt.Sprintf("[ERROR] unable to authenticate with provided oAuth credentials: %s", oErr.Error())
-			log.Fatal(errMsg)
+			b.Logger().Error(errMsg)
 			return nil, oErr
 		}
 
 		client.httpClient, oErr = oAuthConfig.GetHttpClient()
 		if oErr != nil {
 			errMsg := fmt.Sprintf("[ERROR] there was an error retreiving the oAuth http client: %s", oErr.Error())
-			log.Fatal(errMsg)
+			b.Logger().Error(errMsg)
 			return nil, oErr
 		}
 	}

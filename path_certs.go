@@ -12,7 +12,6 @@ package kfbackend
 import (
 	"context"
 	"encoding/base64"
-	b64 "encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -27,7 +26,7 @@ import (
 	"github.com/hashicorp/vault/sdk/logical"
 )
 
-const kf_revoke_path = "/KeyfactorAPI/Certificates/Revoke"
+const kf_revoke_path = "/Certificates/Revoke"
 
 type revocationInfo struct {
 	CertificateBytes  []byte    `json:"certificate_bytes"`
@@ -77,7 +76,7 @@ func pathCerts(b *keyfactorBackend) []*framework.Path {
 				}}),
 		},
 		{ // fetch cert
-			Pattern: `cert/(?P<serial>[0-9A-Fa-f-:]+)`,
+			Pattern: `certs/(?P<serial>[0-9A-Fa-f-:]+)`,
 			Fields: map[string]*framework.FieldSchema{
 				"serial": {
 					Type: framework.TypeString,
@@ -292,6 +291,7 @@ func (b *keyfactorBackend) pathIssueSignCert(ctx context.Context, req *logical.R
 	b.Logger().Debug(string(arg))
 
 	// get common name
+	b.Logger().Debug("parsing common_name...")
 	cn, ok := data.GetOk("common_name")
 
 	if !ok {
@@ -304,7 +304,10 @@ func (b *keyfactorBackend) pathIssueSignCert(ctx context.Context, req *logical.R
 		return nil, fmt.Errorf("common_name must be provided to issue certificate")
 	}
 
+	b.Logger().Debug(fmt.Sprintf("common_name = %s", cn))
+
 	// get dns sans (required)
+	b.Logger().Debug("parsing dns_sans...")
 	dns_sans_string, ok := data.GetOk("dns_sans")
 
 	if !ok {
@@ -323,24 +326,32 @@ func (b *keyfactorBackend) pathIssueSignCert(ctx context.Context, req *logical.R
 		return nil, fmt.Errorf("dns_sans must be provided to issue certificate")
 	}
 
+	b.Logger().Debug(fmt.Sprintf("dns_sans = %s", dns_sans))
+
 	// get ip sans (optional)
+	b.Logger().Debug("parsing ip_sans...")
 	ip_sans_string, ok := data.GetOk("ip_sans")
-	if ok {
+	if ok && ip_sans_string != "" {
 		ip_sans = strings.Split(ip_sans_string.(string), ",")
 	}
 
+	// get the CA name
+	b.Logger().Debug("parsing ca...")
 	caName := data.Get("ca").(string)
 	if caName == "" {
+		b.Logger().Debug("no ca passed, retreiving from config")
 		caName = b.cachedConfig.CertAuthority
 	}
+	b.Logger().Debug(fmt.Sprintf("ca name = %s", caName))
 
+	// get the template name
+	b.Logger().Debug("parsing template name...")
 	templateName := data.Get("template").(string)
 	if templateName == "" {
+		b.Logger().Debug("no template name in parameters, retrieving from config")
 		templateName = b.cachedConfig.CertTemplate
 	}
-
-	b.Logger().Debug("CA Name parameter = " + caName)
-	b.Logger().Debug("Template name parameter = " + templateName)
+	b.Logger().Debug(fmt.Sprintf("template name: %s", templateName))
 
 	//check role permissions
 	var err_resp error
@@ -348,8 +359,10 @@ func (b *keyfactorBackend) pathIssueSignCert(ctx context.Context, req *logical.R
 	var hasSuffix bool
 
 	// check the allowed domains for a match.
+	// if allowed_domains is '*', allow any domain
+
 	for _, v := range role.AllowedDomains {
-		if strings.HasSuffix(cn.(string), v) { // if it has the suffix..
+		if v == "*" || strings.HasSuffix(cn.(string), v) { // if it has the suffix..
 			hasSuffix = true
 			if cn.(string) == v || role.AllowSubdomains { // and there is an exact match, or subdomains are allowed..
 				valid = true // then it is valid
@@ -377,7 +390,7 @@ func (b *keyfactorBackend) pathIssueSignCert(ctx context.Context, req *logical.R
 		cnMatch = cnMatch || dns_sans[u] == cn.(string) // check to make sure at least one of the dns_sans match the cn
 		b.Logger().Trace("checking SANs")
 		for _, v := range role.AllowedDomains {
-			if strings.HasSuffix(dns_sans[u], v) { // if it has the suffix..
+			if v == "*" || strings.HasSuffix(dns_sans[u], v) { // if it has the suffix..
 				hasSuffix = true
 				if dns_sans[u] == v || role.AllowSubdomains { // and there is an exact match, or subdomains are allowed..
 					valid = true // then it is valid
@@ -385,7 +398,7 @@ func (b *keyfactorBackend) pathIssueSignCert(ctx context.Context, req *logical.R
 			}
 		}
 		if !valid {
-			err_resp = fmt.Errorf("Subject Alternative Name " + dns_sans[u] + " not allowed for provided role")
+			err_resp = fmt.Errorf("subject alternative name %s not allowed for provided role", dns_sans[u])
 		}
 		if !valid && hasSuffix {
 			err_resp = fmt.Errorf("sub-domains not allowed for role")
@@ -403,6 +416,7 @@ func (b *keyfactorBackend) pathIssueSignCert(ctx context.Context, req *logical.R
 	}
 
 	//generate and submit CSR
+	b.Logger().Debug("generating the CSR...")
 	csr, key := b.generateCSR(cn.(string), ip_sans, dns_sans)
 	certs, serial, errr := b.submitCSR(ctx, req, csr, caName, templateName)
 
@@ -455,19 +469,22 @@ func revokeCert(ctx context.Context, b *keyfactorBackend, req *logical.Request, 
 		return nil, nil
 	}
 
-	config, err := b.fetchConfig(ctx, req.Storage)
+	// get client
+	client, err := b.getClient(ctx, req.Storage)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error getting client: %w", err)
 	}
-	if config == nil {
-		return logical.ErrorResponse("could not load configuration"), nil
-	}
-
-	creds := config.Username + ":" + config.Password
-	encCreds := b64.StdEncoding.EncodeToString([]byte(creds))
 
 	b.Logger().Debug("Closing idle connections")
-	http.DefaultClient.CloseIdleConnections()
+	client.httpClient.CloseIdleConnections()
+
+	// config, err := b.fetchConfig(ctx, req.Storage)
+	// if err != nil {
+	// 	return nil, err
+	// }
+	// if config == nil {
+	// 	return logical.ErrorResponse("could not load configuration"), nil
+	// }
 
 	kfId, err := req.Storage.Get(ctx, "kfId/"+serial) //retrieve the keyfactor certificate ID, keyed by sn here
 	if err != nil {
@@ -484,7 +501,7 @@ func revokeCert(ctx context.Context, b *keyfactorBackend, req *logical.Request, 
 	}
 
 	// set up keyfactor api request
-	url := config.KeyfactorUrl + kf_revoke_path
+	url := b.cachedConfig.KeyfactorUrl + "/" + b.cachedConfig.CommandAPIPath + kf_revoke_path
 	payload := fmt.Sprintf(`{
 		"CertificateIds": [
 		  %d
@@ -499,9 +516,8 @@ func revokeCert(ctx context.Context, b *keyfactorBackend, req *logical.Request, 
 
 	httpReq.Header.Add("x-keyfactor-requested-with", "APIClient")
 	httpReq.Header.Add("content-type", "application/json")
-	httpReq.Header.Add("authorization", "Basic "+encCreds)
 
-	res, err := http.DefaultClient.Do(httpReq)
+	res, err := client.httpClient.Do(httpReq)
 	if err != nil {
 		b.Logger().Error("Revoke failed: {{err}}", err)
 		return nil, err
@@ -510,7 +526,6 @@ func revokeCert(ctx context.Context, b *keyfactorBackend, req *logical.Request, 
 
 	b.Logger().Debug("response received.  Status code " + fmt.Sprint(res.StatusCode) + " response body: \n " + string(r[:]))
 	if res.StatusCode != 204 && res.StatusCode != 200 {
-		// r, _ := io.ReadAll(res.Body)
 		b.Logger().Info("revocation failed: server returned" + fmt.Sprint(res.StatusCode))
 		b.Logger().Info("error response = " + string(r[:]))
 		return nil, fmt.Errorf("revocation failed: server returned  %s\n ", res.Status)

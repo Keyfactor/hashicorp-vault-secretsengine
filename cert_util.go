@@ -180,7 +180,7 @@ func getCAId(ctx context.Context, req *logical.Request, b *keyfactorBackend) (st
 
 	// Build request
 
-	url := config.KeyfactorUrl + "/KeyfactorAPI/Certificates?pq.queryString=CA%20-eq%20%22" + ca_name + "%22%20AND%20CertState%20-eq%20%226%22" // CertState 6 = cert
+	url := config.KeyfactorUrl + "/" + config.CommandAPIPath + "/Certificates?pq.queryString=CA%20-eq%20%22" + ca_name + "%22%20AND%20CertState%20-eq%20%226%22" // CertState 6 = cert
 	b.Logger().Debug("url: " + url)
 	httpReq, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -256,8 +256,6 @@ func fetchCertFromKeyfactor(ctx context.Context, req *logical.Request, b *keyfac
 	if config == nil {
 		return "", errors.New("unable to load configuration")
 	}
-	// creds := config.Username + ":" + config.Password
-	// encCreds := b64.StdEncoding.EncodeToString([]byte(creds))
 
 	// get the client
 	client, err := b.getClient(ctx, req.Storage)
@@ -274,7 +272,7 @@ func fetchCertFromKeyfactor(ctx context.Context, req *logical.Request, b *keyfac
 	}
 
 	// Build request
-	url := config.KeyfactorUrl + "/KeyfactorAPI/Certificates/Download"
+	url := config.KeyfactorUrl + "Certificates/Download"
 	b.Logger().Debug("url: " + url)
 	bodyContent := fmt.Sprintf(`{"CertID": %s, "IncludeChain": %s }`, kfCertId, include)
 	payload := strings.NewReader(bodyContent)
@@ -319,7 +317,7 @@ func fetchCertFromKeyfactor(ctx context.Context, req *logical.Request, b *keyfac
 }
 
 // Allows fetching certificates from the backend; it handles the slightly
-// separate pathing for CA, CRL, and revoked certificates.
+// separate pathing for CA and revoked certificates.
 func fetchCertBySerial(ctx context.Context, req *logical.Request, prefix, serial string) (*logical.StorageEntry, error) {
 	var path, legacyPath string
 	var err error

@@ -63,10 +63,6 @@ func (b *keyfactorBackend) pathFetchCa(ctx context.Context, req *logical.Request
 		serial = "ca"
 	}
 
-	if len(serial) == 0 {
-		response = logical.ErrorResponse("The serial number must be provided")
-	}
-
 	if serial == "ca" {
 		return fetchCAInfo(ctx, req, b)
 	}

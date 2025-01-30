@@ -25,7 +25,9 @@ import (
 	"github.com/hashicorp/vault/sdk/logical"
 )
 
-//var config map[string]string
+const (
+	operationPrefixKeyfactor string = "keyfactor"
+)
 
 // Factory configures and returns backend
 func Factory(ctx context.Context, conf *logical.BackendConfig) (logical.Backend, error) {
@@ -66,9 +68,10 @@ func backend() *keyfactorBackend {
 			pathCA(&b),
 			pathCerts(&b),
 		),
-		Secrets:     []*framework.Secret{},
-		BackendType: logical.TypeLogical,
-		Invalidate:  b.invalidate,
+		Secrets:        []*framework.Secret{},
+		BackendType:    logical.TypeLogical,
+		Invalidate:     b.invalidate,
+		InitializeFunc: b.Initialize,
 	}
 	return &b
 }
@@ -81,6 +84,15 @@ func (b *keyfactorBackend) reset() {
 	b.cachedConfig = nil
 	b.client = nil
 
+}
+
+func (b *keyfactorBackend) Initialize(ctx context.Context, req *logical.InitializationRequest) error {
+	b.configLock.RLock()
+	defer b.configLock.RUnlock()
+	if req == nil {
+		return fmt.Errorf("initialization request is nil")
+	}
+	return nil
 }
 
 // invalidate clears an existing client configuration in
@@ -110,7 +122,7 @@ func (b *keyfactorBackend) getClient(ctx context.Context, s logical.Storage) (*k
 		return nil, errors.New("configuration is empty")
 	}
 
-	b.client, err = newClient(config)
+	b.client, err = newClient(config, b)
 	if err != nil {
 		return nil, err
 	}
@@ -138,11 +150,11 @@ func (b *keyfactorBackend) submitCSR(ctx context.Context, req *logical.Request, 
 	}
 
 	b.Logger().Debug("Closing idle connections")
-	b.client.httpClient.CloseIdleConnections()
+	client.httpClient.CloseIdleConnections()
 
 	// build request parameter structure
 
-	url := config.KeyfactorUrl + "/KeyfactorAPI/Enrollment/CSR"
+	url := config.KeyfactorUrl + "/" + config.CommandAPIPath + "/Enrollment/CSR"
 	b.Logger().Debug("url: " + url)
 	bodyContent := "{\"CSR\": \"" + csr + "\",\"CertificateAuthority\":\"" + caName + "\",\"IncludeChain\": true, \"Metadata\": {}, \"Timestamp\": \"" + time + "\",\"Template\": \"" + templateName + "\",\"SANs\": {}}"
 	payload := strings.NewReader(bodyContent)

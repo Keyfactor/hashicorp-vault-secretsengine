@@ -34,7 +34,7 @@ type keyfactorConfig struct {
 	AccessToken     string   `json:"access_token"`
 	SkipTLSVerify   bool     `json:"skip_verify"`
 	Scopes          []string `json:"scopes"`
-	Audience        string   `json:"audience"`
+	Audience        []string `json:"audience"`
 	CertTemplate    string   `json:"template"`
 	CertAuthority   string   `json:"ca"`
 	CommandCertPath string   `json:"command_cert_path"`
@@ -115,7 +115,7 @@ func pathConfig(b *keyfactorBackend) []*framework.Path {
 					Required: false,
 				},
 				"audience": {
-					Type: framework.TypeString,
+					Type: framework.TypeCommaStringSlice,
 					Description: "The audience for authenticating with Keyfactor Command using `OAuth2` client" +
 						" credentials.",
 					Required: false,
@@ -165,6 +165,11 @@ func pathConfig(b *keyfactorBackend) []*framework.Path {
 					Description: "Path to CA certificate to use when connecting to the Keyfactor Command API in PEM format.",
 					Required:    false,
 				},
+				"show_hidden": {
+					Type:        framework.TypeBool,
+					Description: "Set this flag to show sensitive values in the output",
+					Required:    false,
+				},
 			},
 
 			Callbacks: map[logical.Operation]framework.OperationFunc{
@@ -177,20 +182,6 @@ func pathConfig(b *keyfactorBackend) []*framework.Path {
 		},
 	}
 }
-
-// // pathConfigExistenceCheck verifies if the configuration exists.
-// func (b *keyfactorBackend) pathConfigExistenceCheck(
-// 	ctx context.Context,
-// 	req *logical.Request,
-// 	data *framework.FieldData,
-// ) (bool, error) {
-// 	out, err := req.Storage.Get(ctx, req.Path)
-// 	if err != nil {
-// 		return false, fmt.Errorf("existence check failed: %w", err)
-// 	}
-
-// 	return out != nil, nil
-// }
 
 // pathConfigRead reads the configuration and outputs non-sensitive information.
 func (b *keyfactorBackend) pathConfigRead(
@@ -205,15 +196,27 @@ func (b *keyfactorBackend) pathConfigRead(
 	if config == nil {
 		return nil, nil
 	}
+	showSensitiveData := data.Get("show_hidden").(bool)
+	// obscuring sensitive info:
+
+	clientSecret := config.ClientSecret
+	if clientSecret != "" && !showSensitiveData {
+		clientSecret = "(hidden)"
+	}
+
+	password := config.Password
+	if password != "" && !showSensitiveData {
+		password = "(hidden)"
+	}
 
 	return &logical.Response{
 		Data: map[string]interface{}{
 			"url":               config.KeyfactorUrl,
 			"api_path":          config.CommandAPIPath,
 			"username":          config.Username,
-			"password":          config.Password,
+			"password":          password,
 			"client_id":         config.ClientId,
-			"client_secret":     config.ClientSecret,
+			"client_secret":     clientSecret,
 			"token_url":         config.TokenUrl,
 			"scopes":            config.Scopes,
 			"audience":          config.Audience,
@@ -249,7 +252,7 @@ func (b *keyfactorBackend) pathConfigUpdate(
 		TokenUrl:        data.Get("token_url").(string),
 		AccessToken:     data.Get("access_token").(string),
 		Scopes:          data.Get("scopes").([]string),
-		Audience:        data.Get("audience").(string),
+		Audience:        data.Get("audience").([]string),
 		Domain:          data.Get("domain").(string),
 		CommandCertPath: data.Get("command_cert_path").(string),
 		SkipTLSVerify:   data.Get("skip_verify").(bool),
@@ -312,7 +315,7 @@ func (b *keyfactorBackend) pathConfigUpdate(
 	}
 
 	if audience, ok := data.GetOk("audience"); ok {
-		existingConfig.Audience = audience.(string)
+		existingConfig.Audience = audience.([]string)
 	}
 
 	if domain, ok := data.GetOk("domain"); ok {
@@ -340,7 +343,7 @@ func (b *keyfactorBackend) pathConfigUpdate(
 
 	// reset the client so the next invocation will pick up the new configuration
 	b.reset()
-
+	b.cachedConfig = existingConfig
 	return nil, nil
 }
 
@@ -353,25 +356,6 @@ func (b *keyfactorBackend) pathConfigDelete(
 	err := req.Storage.Delete(ctx, configPath)
 	return nil, err
 }
-
-// func getConfig(ctx context.Context, s logical.Storage) (*keyfactorConfig, error) {
-// 	entry, err := s.Get(ctx, configPath)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-
-// 	if entry == nil {
-// 		return nil, nil
-// 	}
-
-// 	config := new(keyfactorConfig)
-// 	if err := entry.DecodeJSON(&config); err != nil {
-// 		return nil, fmt.Errorf("error reading root configuration: %w", err)
-// 	}
-
-// 	// return the config, we are done
-// 	return config, nil
-// }
 
 // pathConfigHelpSynopsis summarizes the help text for the configuration
 const pathConfigHelpSynopsis = `Configure the Keyfactor Secrets Engine backend.`
