@@ -1,4 +1,4 @@
-/* 
+/*
  *  Copyright 2024 Keyfactor
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the License.
  *  You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
@@ -11,10 +11,11 @@ package main
 
 import (
 	"os"
-	keyfactor "github.com/keyfactor/hashicorp-vault-secrets-engine"
+
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/vault/api"
 	"github.com/hashicorp/vault/sdk/plugin"
+	kfbackend "github.com/keyfactor/hashicorp-vault-secrets-engine"
 )
 
 func main() {
@@ -26,7 +27,7 @@ func main() {
 	tlsProviderFunc := api.VaultPluginTLSProvider(tlsConfig)
 
 	if err := plugin.Serve(&plugin.ServeOpts{
-		BackendFactoryFunc: keyfactor.Factory,
+		BackendFactoryFunc: kfbackend.Factory,
 		TLSProviderFunc:    tlsProviderFunc,
 	}); err != nil {
 		logger := hclog.New(&hclog.LoggerOptions{})

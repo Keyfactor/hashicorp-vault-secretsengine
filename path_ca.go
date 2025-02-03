@@ -7,7 +7,7 @@
  *  and limitations under the License.
  */
 
-package keyfactor
+package kfbackend
 
 import (
 	"context"
@@ -61,10 +61,6 @@ func (b *keyfactorBackend) pathFetchCa(ctx context.Context, req *logical.Request
 		serial = "ca_chain"
 	default:
 		serial = "ca"
-	}
-
-	if len(serial) == 0 {
-		response = logical.ErrorResponse("The serial number must be provided")
 	}
 
 	if serial == "ca" {

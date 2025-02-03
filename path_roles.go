@@ -7,7 +7,7 @@
  *  and limitations under the License.
  */
 
-package keyfactor
+package kfbackend
 
 import (
 	"context"
@@ -24,363 +24,10 @@ import (
 	"github.com/hashicorp/vault/sdk/logical"
 )
 
-// func pathListRoles(b *keyfactorBackend) *framework.Path {
-// 	return &framework.Path{
-// 		Pattern: "roles/?$",
-
-// 		Callbacks: map[logical.Operation]framework.OperationFunc{
-// 			logical.ListOperation: b.pathRoleList,
-// 		},
-
-// 		HelpSynopsis:    pathListRolesHelpSyn,
-// 		HelpDescription: pathListRolesHelpDesc,
-// 	}
-// }
-
 func pathRoles(b *keyfactorBackend) []*framework.Path {
 	return []*framework.Path{
 		{
-			Pattern: "roles/" + framework.GenericNameRegex("name"),
-			Fields: map[string]*framework.FieldSchema{
-				"backend": &framework.FieldSchema{
-					Type:        framework.TypeString,
-					Description: "Backend Type",
-				},
-
-				"name": &framework.FieldSchema{
-					Type:        framework.TypeString,
-					Description: "Name of the role",
-				},
-
-				"ttl": &framework.FieldSchema{
-					Type: framework.TypeDurationSecond,
-					Description: `The lease duration if no specific lease duration is
-requested. The lease duration controls the expiration
-of certificates issued by this backend. Defaults to
-the value of max_ttl.`,
-					DisplayAttrs: &framework.DisplayAttributes{
-						Name: "TTL",
-					},
-				},
-
-				"max_ttl": &framework.FieldSchema{
-					Type:        framework.TypeDurationSecond,
-					Description: "The maximum allowed lease duration",
-					DisplayAttrs: &framework.DisplayAttributes{
-						Name: "Max TTL",
-					},
-				},
-
-				"allow_localhost": &framework.FieldSchema{
-					Type:    framework.TypeBool,
-					Default: true,
-					Description: `Whether to allow "localhost" as a valid common
-name in a request`,
-					DisplayAttrs: &framework.DisplayAttributes{
-						Value: true,
-					},
-				},
-
-				"allowed_domains": &framework.FieldSchema{
-					Type: framework.TypeCommaStringSlice,
-					Description: `If set, clients can request certificates for
-subdomains directly beneath these domains, including
-the wildcard subdomains. See the documentation for more
-information. This parameter accepts a comma-separated 
-string or list of domains.`,
-				},
-				"allowed_domains_template": &framework.FieldSchema{
-					Type: framework.TypeBool,
-					Description: `If set, Allowed domains can be specified using identity template policies.
-				Non-templated domains are also permitted.`,
-					Default: false,
-				},
-				"allow_bare_domains": &framework.FieldSchema{
-					Type: framework.TypeBool,
-					Description: `If set, clients can request certificates
-for the base domains themselves, e.g. "example.com".
-This is a separate option as in some cases this can
-be considered a security threat.`,
-				},
-
-				"allow_subdomains": &framework.FieldSchema{
-					Type: framework.TypeBool,
-					Description: `If set, clients can request certificates for
-subdomains of the CNs allowed by the other role options,
-including wildcard subdomains. See the documentation for
-more information.`,
-				},
-
-				"allow_glob_domains": &framework.FieldSchema{
-					Type: framework.TypeBool,
-					Description: `If set, domains specified in "allowed_domains"
-can include glob patterns, e.g. "ftp*.example.com". See
-the documentation for more information.`,
-				},
-
-				"allow_any_name": &framework.FieldSchema{
-					Type: framework.TypeBool,
-					Description: `If set, clients can request certificates for
-any CN they like. See the documentation for more
-information.`,
-				},
-
-				"enforce_hostnames": &framework.FieldSchema{
-					Type:    framework.TypeBool,
-					Default: true,
-					Description: `If set, only valid host names are allowed for
-CN and SANs. Defaults to true.`,
-					DisplayAttrs: &framework.DisplayAttributes{
-						Value: true,
-					},
-				},
-
-				"allow_ip_sans": &framework.FieldSchema{
-					Type:    framework.TypeBool,
-					Default: true,
-					Description: `If set, IP Subject Alternative Names are allowed.
-Any valid IP is accepted.`,
-					DisplayAttrs: &framework.DisplayAttributes{
-						Name:  "Allow IP Subject Alternative Names",
-						Value: true,
-					},
-				},
-
-				"allowed_uri_sans": &framework.FieldSchema{
-					Type: framework.TypeCommaStringSlice,
-					Description: `If set, an array of allowed URIs to put in the URI Subject Alternative Names.
-Any valid URI is accepted, these values support globbing.`,
-					DisplayAttrs: &framework.DisplayAttributes{
-						Name: "Allowed URI Subject Alternative Names",
-					},
-				},
-
-				"allowed_other_sans": &framework.FieldSchema{
-					Type:        framework.TypeCommaStringSlice,
-					Description: `If set, an array of allowed other names to put in SANs. These values support globbing and must be in the format <oid>;<type>:<value>. Currently only "utf8" is a valid type. All values, including globbing values, must use this syntax, with the exception being a single "*" which allows any OID and any value (but type must still be utf8).`,
-					DisplayAttrs: &framework.DisplayAttributes{
-						Name: "Allowed Other Subject Alternative Names",
-					},
-				},
-
-				"allowed_serial_numbers": &framework.FieldSchema{
-					Type:        framework.TypeCommaStringSlice,
-					Description: `If set, an array of allowed serial numbers to put in Subject. These values support globbing.`,
-				},
-
-				"server_flag": &framework.FieldSchema{
-					Type:    framework.TypeBool,
-					Default: true,
-					Description: `If set, certificates are flagged for server auth use.
-Defaults to true.`,
-					DisplayAttrs: &framework.DisplayAttributes{
-						Value: true,
-					},
-				},
-
-				"client_flag": &framework.FieldSchema{
-					Type:    framework.TypeBool,
-					Default: true,
-					Description: `If set, certificates are flagged for client auth use.
-Defaults to true.`,
-					DisplayAttrs: &framework.DisplayAttributes{
-						Value: true,
-					},
-				},
-
-				"code_signing_flag": &framework.FieldSchema{
-					Type: framework.TypeBool,
-					Description: `If set, certificates are flagged for code signing
-use. Defaults to false.`,
-				},
-
-				"email_protection_flag": &framework.FieldSchema{
-					Type: framework.TypeBool,
-					Description: `If set, certificates are flagged for email
-protection use. Defaults to false.`,
-				},
-
-				"key_type": &framework.FieldSchema{
-					Type:    framework.TypeString,
-					Default: "rsa",
-					Description: `The type of key to use; defaults to RSA. "rsa"
-and "ec" are the only valid values.`,
-					AllowedValues: []interface{}{"rsa", "ec"},
-				},
-
-				"key_bits": &framework.FieldSchema{
-					Type:    framework.TypeInt,
-					Default: 2048,
-					Description: `The number of bits to use. You will almost
-certainly want to change this if you adjust
-the key_type.`,
-				},
-
-				"key_usage": &framework.FieldSchema{
-					Type:    framework.TypeCommaStringSlice,
-					Default: []string{"DigitalSignature", "KeyAgreement", "KeyEncipherment"},
-					Description: `A comma-separated string or list of key usages (not extended
-key usages). Valid values can be found at
-https://golang.org/pkg/crypto/x509/#KeyUsage
--- simply drop the "KeyUsage" part of the name.
-To remove all key usages from being set, set
-this value to an empty list.`,
-					DisplayAttrs: &framework.DisplayAttributes{
-						Value: "DigitalSignature,KeyAgreement,KeyEncipherment",
-					},
-				},
-
-				"ext_key_usage": &framework.FieldSchema{
-					Type:    framework.TypeCommaStringSlice,
-					Default: []string{},
-					Description: `A comma-separated string or list of extended key usages. Valid values can be found at
-https://golang.org/pkg/crypto/x509/#ExtKeyUsage
--- simply drop the "ExtKeyUsage" part of the name.
-To remove all key usages from being set, set
-this value to an empty list.`,
-					DisplayAttrs: &framework.DisplayAttributes{
-						Name: "Extended Key Usage",
-					},
-				},
-
-				"ext_key_usage_oids": &framework.FieldSchema{
-					Type:        framework.TypeCommaStringSlice,
-					Description: `A comma-separated string or list of extended key usage oids.`,
-					DisplayAttrs: &framework.DisplayAttributes{
-						Name: "Extended Key Usage OIDs",
-					},
-				},
-
-				"use_csr_common_name": &framework.FieldSchema{
-					Type:    framework.TypeBool,
-					Default: true,
-					Description: `If set, when used with a signing profile,
-the common name in the CSR will be used. This
-does *not* include any requested Subject Alternative
-Names. Defaults to true.`,
-					DisplayAttrs: &framework.DisplayAttributes{
-						Name:  "Use CSR Common Name",
-						Value: true,
-					},
-				},
-
-				"use_csr_sans": &framework.FieldSchema{
-					Type:    framework.TypeBool,
-					Default: true,
-					Description: `If set, when used with a signing profile,
-the SANs in the CSR will be used. This does *not*
-include the Common Name (cn). Defaults to true.`,
-					DisplayAttrs: &framework.DisplayAttributes{
-						Name:  "Use CSR Subject Alternative Names",
-						Value: true,
-					},
-				},
-
-				"ou": &framework.FieldSchema{
-					Type: framework.TypeCommaStringSlice,
-					Description: `If set, OU (OrganizationalUnit) will be set to
-this value in certificates issued by this role.`,
-					DisplayAttrs: &framework.DisplayAttributes{
-						Name: "Organizational Unit",
-					},
-				},
-
-				"organization": &framework.FieldSchema{
-					Type: framework.TypeCommaStringSlice,
-					Description: `If set, O (Organization) will be set to
-this value in certificates issued by this role.`,
-				},
-
-				"country": &framework.FieldSchema{
-					Type: framework.TypeCommaStringSlice,
-					Description: `If set, Country will be set to
-this value in certificates issued by this role.`,
-				},
-
-				"locality": &framework.FieldSchema{
-					Type: framework.TypeCommaStringSlice,
-					Description: `If set, Locality will be set to
-this value in certificates issued by this role.`,
-					DisplayAttrs: &framework.DisplayAttributes{
-						Name: "Locality/City",
-					},
-				},
-
-				"province": &framework.FieldSchema{
-					Type: framework.TypeCommaStringSlice,
-					Description: `If set, Province will be set to
-this value in certificates issued by this role.`,
-					DisplayAttrs: &framework.DisplayAttributes{
-						Name: "Province/State",
-					},
-				},
-
-				"street_address": &framework.FieldSchema{
-					Type: framework.TypeCommaStringSlice,
-					Description: `If set, Street Address will be set to
-this value in certificates issued by this role.`,
-				},
-
-				"postal_code": &framework.FieldSchema{
-					Type: framework.TypeCommaStringSlice,
-					Description: `If set, Postal Code will be set to
-this value in certificates issued by this role.`,
-				},
-
-				"generate_lease": &framework.FieldSchema{
-					Type: framework.TypeBool,
-					Description: `
-If set, certificates issued/signed against this role will have Vault leases
-attached to them. Defaults to "false". Certificates can be added to the CRL by
-"vault revoke <lease_id>" when certificates are associated with leases.  It can
-also be done using the "pki/revoke" endpoint. However, when lease generation is
-disabled, invoking "pki/revoke" would be the only way to add the certificates
-to the CRL.  When large number of certificates are generated with long
-lifetimes, it is recommended that lease generation be disabled, as large amount of
-leases adversely affect the startup time of Vault.`,
-				},
-
-				"no_store": &framework.FieldSchema{
-					Type: framework.TypeBool,
-					Description: `
-If set, certificates issued/signed against this role will not be stored in the
-storage backend. This can improve performance when issuing large numbers of 
-certificates. However, certificates issued in this way cannot be enumerated
-or revoked, so this option is recommended only for certificates that are
-non-sensitive, or extremely short-lived. This option implies a value of "false"
-for "generate_lease".`,
-				},
-
-				"require_cn": &framework.FieldSchema{
-					Type:        framework.TypeBool,
-					Default:     true,
-					Description: `If set to false, makes the 'common_name' field optional while generating a certificate.`,
-					DisplayAttrs: &framework.DisplayAttributes{
-						Name: "Require Common Name",
-					},
-				},
-
-				"policy_identifiers": &framework.FieldSchema{
-					Type:        framework.TypeCommaStringSlice,
-					Description: `A comma-separated string or list of policy oids.`,
-				},
-
-				"basic_constraints_valid_for_non_ca": &framework.FieldSchema{
-					Type:        framework.TypeBool,
-					Description: `Mark Basic Constraints valid when issuing non-CA certificates.`,
-					DisplayAttrs: &framework.DisplayAttributes{
-						Name: "Basic Constraints Valid for Non-CA",
-					},
-				},
-				"not_before_duration": &framework.FieldSchema{
-					Type:        framework.TypeDurationSecond,
-					Default:     30,
-					Description: `The duration before now the cert needs to be created / signed.`,
-					DisplayAttrs: &framework.DisplayAttributes{
-						Value: 30,
-					},
-				},
-			},
+			Pattern: "roles/" + framework.GenericNameRegex("name"), // read or update role
 
 			Callbacks: map[logical.Operation]framework.OperationFunc{
 				logical.ReadOperation:   b.pathRoleRead,
@@ -388,6 +35,7 @@ for "generate_lease".`,
 				logical.DeleteOperation: b.pathRoleDelete,
 			},
 
+			Fields:          addRoleFields(map[string]*framework.FieldSchema{}),
 			HelpSynopsis:    pathRoleHelpSyn,
 			HelpDescription: pathRoleHelpDesc,
 		},
@@ -398,8 +46,8 @@ for "generate_lease".`,
 				logical.ListOperation: b.pathRoleList,
 			},
 
-			HelpSynopsis:    pathListRolesHelpSyn,
-			HelpDescription: pathListRolesHelpDesc,
+			HelpSynopsis:    pathRoleHelpSyn,
+			HelpDescription: pathRoleHelpDesc,
 		},
 	}
 }
@@ -665,85 +313,6 @@ func (b *keyfactorBackend) pathRoleCreate(ctx context.Context, req *logical.Requ
 	return nil, nil
 }
 
-// func parseKeyUsages(input []string) int {
-// 	var parsedKeyUsages x509.KeyUsage
-// 	for _, k := range input {
-// 		switch strings.ToLower(strings.TrimSpace(k)) {
-// 		case "digitalsignature":
-// 			parsedKeyUsages |= x509.KeyUsageDigitalSignature
-// 		case "contentcommitment":
-// 			parsedKeyUsages |= x509.KeyUsageContentCommitment
-// 		case "keyencipherment":
-// 			parsedKeyUsages |= x509.KeyUsageKeyEncipherment
-// 		case "dataencipherment":
-// 			parsedKeyUsages |= x509.KeyUsageDataEncipherment
-// 		case "keyagreement":
-// 			parsedKeyUsages |= x509.KeyUsageKeyAgreement
-// 		case "certsign":
-// 			parsedKeyUsages |= x509.KeyUsageCertSign
-// 		case "crlsign":
-// 			parsedKeyUsages |= x509.KeyUsageCRLSign
-// 		case "encipheronly":
-// 			parsedKeyUsages |= x509.KeyUsageEncipherOnly
-// 		case "decipheronly":
-// 			parsedKeyUsages |= x509.KeyUsageDecipherOnly
-// 		}
-// 	}
-
-// 	return int(parsedKeyUsages)
-// }
-
-// func parseExtKeyUsages(role *roleEntry) certutil.CertExtKeyUsage {
-// 	var parsedKeyUsages certutil.CertExtKeyUsage
-
-// 	if role.ServerFlag {
-// 		parsedKeyUsages |= certutil.ServerAuthExtKeyUsage
-// 	}
-
-// 	if role.ClientFlag {
-// 		parsedKeyUsages |= certutil.ClientAuthExtKeyUsage
-// 	}
-
-// 	if role.CodeSigningFlag {
-// 		parsedKeyUsages |= certutil.CodeSigningExtKeyUsage
-// 	}
-
-// 	if role.EmailProtectionFlag {
-// 		parsedKeyUsages |= certutil.EmailProtectionExtKeyUsage
-// 	}
-
-// 	for _, k := range role.ExtKeyUsage {
-// 		switch strings.ToLower(strings.TrimSpace(k)) {
-// 		case "any":
-// 			parsedKeyUsages |= certutil.AnyExtKeyUsage
-// 		case "serverauth":
-// 			parsedKeyUsages |= certutil.ServerAuthExtKeyUsage
-// 		case "clientauth":
-// 			parsedKeyUsages |= certutil.ClientAuthExtKeyUsage
-// 		case "codesigning":
-// 			parsedKeyUsages |= certutil.CodeSigningExtKeyUsage
-// 		case "emailprotection":
-// 			parsedKeyUsages |= certutil.EmailProtectionExtKeyUsage
-// 		case "ipsecendsystem":
-// 			parsedKeyUsages |= certutil.IpsecEndSystemExtKeyUsage
-// 		case "ipsectunnel":
-// 			parsedKeyUsages |= certutil.IpsecTunnelExtKeyUsage
-// 		case "ipsecuser":
-// 			parsedKeyUsages |= certutil.IpsecUserExtKeyUsage
-// 		case "timestamping":
-// 			parsedKeyUsages |= certutil.TimeStampingExtKeyUsage
-// 		case "ocspsigning":
-// 			parsedKeyUsages |= certutil.OcspSigningExtKeyUsage
-// 		case "microsoftservergatedcrypto":
-// 			parsedKeyUsages |= certutil.MicrosoftServerGatedCryptoExtKeyUsage
-// 		case "netscapeservergatedcrypto":
-// 			parsedKeyUsages |= certutil.NetscapeServerGatedCryptoExtKeyUsage
-// 		}
-// 	}
-
-// 	return parsedKeyUsages
-// }
-
 type roleEntry struct {
 	LeaseMax                      string        `json:"lease_max"`
 	Lease                         string        `json:"lease"`
@@ -850,10 +419,10 @@ func (r *roleEntry) ToResponseData() map[string]interface{} {
 	return responseData
 }
 
-const pathListRolesHelpSyn = `List the existing roles in this backend`
-
-const pathListRolesHelpDesc = `Roles will be listed by the role name.`
-
 const pathRoleHelpSyn = `Manage the roles that can be created with this backend.`
 
-const pathRoleHelpDesc = `This path lets you manage the roles that can be created with this backend.`
+const pathRoleHelpDesc = `Manage the roles that can be created with this plugin. Roles loosely correspond to Certificate Templates in Keyfactor Command 
+and have been implemented here to maintain compatibility with the Vault PKI secrets engine.
+The Certificate Template configured within Keyfactor Command should be used to set certificate defaults.  
+The Role-specific fields that are verified before passing a certificate issuing request to Command are:
+AllowedDomains, AllowSubdomains.  These can be used to restrict the domains for which certificates can be issued.`
