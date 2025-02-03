@@ -7,7 +7,7 @@
  *  and limitations under the License.
  */
 
-package keyfactor
+package kfbackend
 
 import (
 	"bytes"
@@ -18,12 +18,11 @@ import (
 	"crypto/x509/pkix"
 	"encoding/asn1"
 	"encoding/base64"
-	b64 "encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -37,7 +36,7 @@ import (
 // fetch the CA info from keyfactor
 func fetchCAInfo(ctx context.Context, req *logical.Request, b *keyfactorBackend) (response *logical.Response, retErr error) {
 	// first we see if we have previously retreived the CA or chain
-	config, err := b.config(ctx, req.Storage)
+	config, err := b.fetchConfig(ctx, req.Storage)
 	if err != nil {
 		return nil, err
 	}
@@ -151,12 +150,12 @@ func fetchCaChainInfo(ctx context.Context, req *logical.Request, b *keyfactorBac
 }
 
 func getCAId(ctx context.Context, req *logical.Request, b *keyfactorBackend) (string, error) {
-	config, err := b.config(ctx, req.Storage)
+	config, err := b.fetchConfig(ctx, req.Storage)
 	if err != nil {
 		return "", err
 	}
 	if config == nil {
-		return "", errors.New("unable to load configuration.")
+		return "", errors.New("unable to load configuration")
 	}
 
 	if config.CertAuthority == "" {
@@ -168,28 +167,32 @@ func getCAId(ctx context.Context, req *logical.Request, b *keyfactorBackend) (st
 
 	// This is only needed when running as a vault extension
 	b.Logger().Debug("Closing idle connections")
-	http.DefaultClient.CloseIdleConnections()
+	client, err := b.getClient(ctx, req.Storage)
+	if err != nil {
+		b.Logger().Error("unable to create the http client")
+	}
+	client.httpClient.CloseIdleConnections()
 
 	ca_name = url.QueryEscape(ca_name)
 
-	creds := config.Username + ":" + config.Password
-	encCreds := b64.StdEncoding.EncodeToString([]byte(creds))
+	//creds := config.Username + ":" + config.Password
+	//encCreds := b64.StdEncoding.EncodeToString([]byte(creds))
 
 	// Build request
 
-	url := config.KeyfactorUrl + "/KeyfactorAPI/Certificates?pq.queryString=CA%20-eq%20%22" + ca_name + "%22%20AND%20CertState%20-eq%20%226%22" // CertState 6 = cert
+	url := config.KeyfactorUrl + "/" + config.CommandAPIPath + "/Certificates?pq.queryString=CA%20-eq%20%22" + ca_name + "%22%20AND%20CertState%20-eq%20%226%22" // CertState 6 = cert
 	b.Logger().Debug("url: " + url)
 	httpReq, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		b.Logger().Info("Error forming request: {{err}}", err)
 	}
-	httpReq.Header.Add("x-keyfactor-requested-with", "APIClient")
+	//httpReq.Header.Add("x-keyfactor-requested-with", "APIClient")
 	httpReq.Header.Add("x-keyfactor-api-version", "1")
-	httpReq.Header.Add("authorization", "Basic "+encCreds)
+	//httpReq.Header.Add("authorization", "Basic "+encCreds)
 
 	// Send request and check status
 	b.Logger().Debug("About to connect to " + config.KeyfactorUrl + "for ca retrieval")
-	res, err := http.DefaultClient.Do(httpReq)
+	res, err := client.httpClient.Do(httpReq)
 	if err != nil {
 		b.Logger().Info("failed getting CA: {{err}}", err)
 		return "", err
@@ -197,7 +200,7 @@ func getCAId(ctx context.Context, req *logical.Request, b *keyfactorBackend) (st
 	if res.StatusCode != 200 {
 		b.Logger().Error("request failed: server returned" + fmt.Sprint(res.StatusCode))
 		defer res.Body.Close()
-		body, err := ioutil.ReadAll(res.Body)
+		body, err := io.ReadAll(res.Body)
 		if err != nil {
 			b.Logger().Info("Error reading response: {{err}}", err)
 			return "", err
@@ -246,29 +249,30 @@ func (b *keyfactorBackend) generateCSR(cn string, ip_sans []string, dns_sans []s
 }
 
 func fetchCertFromKeyfactor(ctx context.Context, req *logical.Request, b *keyfactorBackend, kfCertId string, includeChain bool) (string, error) {
-	config, err := b.config(ctx, req.Storage)
+	config, err := b.fetchConfig(ctx, req.Storage)
 	if err != nil {
 		return "", err
 	}
 	if config == nil {
 		return "", errors.New("unable to load configuration")
 	}
-	creds := config.Username + ":" + config.Password
-	encCreds := b64.StdEncoding.EncodeToString([]byte(creds))
-	//location, _ := time.LoadLocation("UTC")
-	//t := time.Now().In(location)
-	//time := t.Format("2006-01-02T15:04:05")
 
+	// get the client
+	client, err := b.getClient(ctx, req.Storage)
+	if err != nil {
+		b.Logger().Error("unable to create the http client")
+	}
 	// This is only needed when running as a vault extension
 	b.Logger().Debug("Closing idle connections")
-	http.DefaultClient.CloseIdleConnections()
+	client.httpClient.CloseIdleConnections()
+
 	include := "false"
 	if includeChain {
 		include = "true"
 	}
 
 	// Build request
-	url := config.KeyfactorUrl + "/KeyfactorAPI/Certificates/Download"
+	url := config.KeyfactorUrl + "Certificates/Download"
 	b.Logger().Debug("url: " + url)
 	bodyContent := fmt.Sprintf(`{"CertID": %s, "IncludeChain": %s }`, kfCertId, include)
 	payload := strings.NewReader(bodyContent)
@@ -279,12 +283,11 @@ func fetchCertFromKeyfactor(ctx context.Context, req *logical.Request, b *keyfac
 	}
 	httpReq.Header.Add("x-keyfactor-requested-with", "APIClient")
 	httpReq.Header.Add("content-type", "application/json")
-	httpReq.Header.Add("authorization", "Basic "+encCreds)
 	httpReq.Header.Add("x-certificateformat", "PEM")
 
 	// Send request and check status
 	b.Logger().Debug("About to connect to " + config.KeyfactorUrl + "for cert retrieval")
-	res, err := http.DefaultClient.Do(httpReq)
+	res, err := client.httpClient.Do(httpReq)
 	if err != nil {
 		b.Logger().Info("failed getting cert: {{err}}", err)
 		return "", err
@@ -298,7 +301,7 @@ func fetchCertFromKeyfactor(ctx context.Context, req *logical.Request, b *keyfac
 	// Read response and return certificate and key
 	defer res.Body.Close()
 
-	body, err := ioutil.ReadAll(res.Body)
+	body, err := io.ReadAll(res.Body)
 	if err != nil {
 		b.Logger().Info("Error reading response: {{err}}", err)
 		return "", err
@@ -314,7 +317,7 @@ func fetchCertFromKeyfactor(ctx context.Context, req *logical.Request, b *keyfac
 }
 
 // Allows fetching certificates from the backend; it handles the slightly
-// separate pathing for CA, CRL, and revoked certificates.
+// separate pathing for CA and revoked certificates.
 func fetchCertBySerial(ctx context.Context, req *logical.Request, prefix, serial string) (*logical.StorageEntry, error) {
 	var path, legacyPath string
 	var err error
@@ -339,7 +342,7 @@ func fetchCertBySerial(ctx context.Context, req *logical.Request, prefix, serial
 		return nil, errutil.InternalError{Err: fmt.Sprintf("error fetching certificate %s: %s", serial, err)}
 	}
 	if certEntry != nil {
-		if certEntry.Value == nil || len(certEntry.Value) == 0 {
+		if len(certEntry.Value) == 0 {
 			return nil, errutil.InternalError{Err: fmt.Sprintf("returned certificate bytes for serial %s were empty", serial)}
 		}
 		return certEntry, nil
@@ -358,7 +361,7 @@ func fetchCertBySerial(ctx context.Context, req *logical.Request, prefix, serial
 	if certEntry == nil {
 		return nil, nil
 	}
-	if certEntry.Value == nil || len(certEntry.Value) == 0 {
+	if len(certEntry.Value) == 0 {
 		return nil, errutil.InternalError{Err: fmt.Sprintf("returned certificate bytes for serial %s were empty", serial)}
 	}
 

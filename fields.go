@@ -7,7 +7,7 @@
  *  and limitations under the License.
  */
 
-package keyfactor
+package kfbackend
 
 import "github.com/hashicorp/vault/sdk/framework"
 
@@ -79,163 +79,341 @@ be larger than the role max TTL.`,
 	return fields
 }
 
-// addCACommonFields adds fields with help text specific to CA
-// certificate issuing and signing
-// func addCACommonFields(fields map[string]*framework.FieldSchema) map[string]*framework.FieldSchema {
-// 	fields = addIssueAndSignCommonFields(fields)
+func addRoleFields(fields map[string]*framework.FieldSchema) map[string]*framework.FieldSchema {
 
-// 	fields["alt_names"] = &framework.FieldSchema{
-// 		Type: framework.TypeString,
-// 		Description: `The requested Subject Alternative Names, if any,
-// in a comma-delimited list. May contain both
-// DNS names and email addresses.`,
-// 		DisplayAttrs: &framework.DisplayAttributes{
-// 			Name: "DNS/Email Subject Alternative Names (SANs)",
-// 		},
-// 	}
+	fields["name"] = &framework.FieldSchema{
+		Type:        framework.TypeString,
+		Description: "Name of the role",
+	}
+	fields["ttl"] = &framework.FieldSchema{
+		Type: framework.TypeDurationSecond,
+		Description: `The lease duration if no specific lease duration is
+requested. The lease duration controls the expiration
+of certificates issued by this backend. Defaults to
+the value of max_ttl.`,
+		DisplayAttrs: &framework.DisplayAttributes{
+			Name: "TTL",
+		},
+	}
 
-// 	fields["common_name"] = &framework.FieldSchema{
-// 		Type: framework.TypeString,
-// 		Description: `The requested common name; if you want more than
-// one, specify the alternative names in the alt_names
-// map. If not specified when signing, the common
-// name will be taken from the CSR; other names
-// must still be specified in alt_names or ip_sans.`,
-// 	}
+	fields["max_ttl"] = &framework.FieldSchema{
+		Type:        framework.TypeDurationSecond,
+		Description: "The maximum allowed lease duration",
+		DisplayAttrs: &framework.DisplayAttributes{
+			Name: "Max TTL",
+		},
+	}
 
-// 	fields["ttl"] = &framework.FieldSchema{
-// 		Type: framework.TypeDurationSecond,
-// 		Description: `The requested Time To Live for the certificate;
-// sets the expiration date. If not specified
-// the role default, backend default, or system
-// default TTL is used, in that order. Cannot
-// be larger than the mount max TTL. Note:
-// this only has an effect when generating
-// a CA cert or signing a CA cert, not when
-// generating a CSR for an intermediate CA.`,
-// 		DisplayAttrs: &framework.DisplayAttributes{
-// 			Name: "TTL",
-// 		},
-// 	}
+	fields["allow_localhost"] = &framework.FieldSchema{
+		Type:    framework.TypeBool,
+		Default: true,
+		Description: `Whether to allow "localhost" as a valid common
+name in a request`,
+		DisplayAttrs: &framework.DisplayAttributes{
+			Value: true,
+		},
+	}
 
-// 	fields["ou"] = &framework.FieldSchema{
-// 		Type: framework.TypeCommaStringSlice,
-// 		Description: `If set, OU (OrganizationalUnit) will be set to
-// this value.`,
-// 		DisplayAttrs: &framework.DisplayAttributes{
-// 			Name: "OU (Organizational Unit)",
-// 		},
-// 	}
+	fields["allowed_domains"] = &framework.FieldSchema{
+		Type: framework.TypeCommaStringSlice,
+		Description: `If set, clients can request certificates for
+subdomains directly beneath these domains, including
+the wildcard subdomains. See the documentation for more
+information. This parameter accepts a comma-separated 
+string or list of domains.`,
+	}
+	fields["allowed_domains_template"] = &framework.FieldSchema{
+		Type: framework.TypeBool,
+		Description: `If set, Allowed domains can be specified using identity template policies.
+				Non-templated domains are also permitted.`,
+		Default: false,
+	}
+	fields["allow_bare_domains"] = &framework.FieldSchema{
+		Type: framework.TypeBool,
+		Description: `If set, clients can request certificates
+for the base domains themselves, e.g. "example.com".
+This is a separate option as in some cases this can
+be considered a security threat.`,
+	}
 
-// 	fields["organization"] = &framework.FieldSchema{
-// 		Type: framework.TypeCommaStringSlice,
-// 		Description: `If set, O (Organization) will be set to
-// this value.`,
-// 	}
+	fields["allow_subdomains"] = &framework.FieldSchema{
+		Type: framework.TypeBool,
+		Description: `If set, clients can request certificates for
+subdomains of the CNs allowed by the other role options,
+including wildcard subdomains. See the documentation for
+more information.`,
+	}
 
-// 	fields["country"] = &framework.FieldSchema{
-// 		Type: framework.TypeCommaStringSlice,
-// 		Description: `If set, Country will be set to
-// this value.`,
-// 	}
+	fields["allow_glob_domains"] = &framework.FieldSchema{
+		Type: framework.TypeBool,
+		Description: `If set, domains specified in "allowed_domains"
+can include glob patterns, e.g. "ftp*.example.com". See
+the documentation for more information.`,
+	}
 
-// 	fields["locality"] = &framework.FieldSchema{
-// 		Type: framework.TypeCommaStringSlice,
-// 		Description: `If set, Locality will be set to
-// this value.`,
-// 		DisplayAttrs: &framework.DisplayAttributes{
-// 			Name: "Locality/City",
-// 		},
-// 	}
+	fields["allow_any_name"] = &framework.FieldSchema{
+		Type: framework.TypeBool,
+		Description: `If set, clients can request certificates for
+any CN they like. See the documentation for more
+information.`,
+	}
 
-// 	fields["province"] = &framework.FieldSchema{
-// 		Type: framework.TypeCommaStringSlice,
-// 		Description: `If set, Province will be set to
-// this value.`,
-// 		DisplayAttrs: &framework.DisplayAttributes{
-// 			Name: "Province/State",
-// 		},
-// 	}
+	fields["enforce_hostnames"] = &framework.FieldSchema{
+		Type:    framework.TypeBool,
+		Default: true,
+		Description: `If set, only valid host names are allowed for
+CN and SANs. Defaults to true.`,
+		DisplayAttrs: &framework.DisplayAttributes{
+			Value: true,
+		},
+	}
 
-// 	fields["street_address"] = &framework.FieldSchema{
-// 		Type: framework.TypeCommaStringSlice,
-// 		Description: `If set, Street Address will be set to
-// this value.`,
-// 		DisplayAttrs: &framework.DisplayAttributes{
-// 			Name: "Street Address",
-// 		},
-// 	}
+	fields["allow_ip_sans"] = &framework.FieldSchema{
+		Type:    framework.TypeBool,
+		Default: true,
+		Description: `If set, IP Subject Alternative Names are allowed.
+Any valid IP is accepted.`,
+		DisplayAttrs: &framework.DisplayAttributes{
+			Name:  "Allow IP Subject Alternative Names",
+			Value: true,
+		},
+	}
 
-// 	fields["postal_code"] = &framework.FieldSchema{
-// 		Type: framework.TypeCommaStringSlice,
-// 		Description: `If set, Postal Code will be set to
-// this value.`,
-// 		DisplayAttrs: &framework.DisplayAttributes{
-// 			Name: "Postal Code",
-// 		},
-// 	}
+	fields["allowed_uri_sans"] = &framework.FieldSchema{
+		Type: framework.TypeCommaStringSlice,
+		Description: `If set, an array of allowed URIs to put in the URI Subject Alternative Names.
+Any valid URI is accepted, these values support globbing.`,
+		DisplayAttrs: &framework.DisplayAttributes{
+			Name: "Allowed URI Subject Alternative Names",
+		},
+	}
 
-// 	fields["serial_number"] = &framework.FieldSchema{
-// 		Type: framework.TypeString,
-// 		Description: `The requested serial number, if any. If you want
-// more than one, specify alternative names in
-// the alt_names map using OID 2.5.4.5.`,
-// 	}
+	fields["allowed_other_sans"] = &framework.FieldSchema{
+		Type:        framework.TypeCommaStringSlice,
+		Description: `If set, an array of allowed other names to put in SANs. These values support globbing and must be in the format <oid>;<type>:<value>. Currently only "utf8" is a valid type. All values, including globbing values, must use this syntax, with the exception being a single "*" which allows any OID and any value (but type must still be utf8).`,
+		DisplayAttrs: &framework.DisplayAttributes{
+			Name: "Allowed Other Subject Alternative Names",
+		},
+	}
 
-// 	return fields
-// }
+	fields["allowed_serial_numbers"] = &framework.FieldSchema{
+		Type:        framework.TypeCommaStringSlice,
+		Description: `If set, an array of allowed serial numbers to put in Subject. These values support globbing.`,
+	}
 
-// // addCAKeyGenerationFields adds fields with help text specific to CA key
-// // generation and exporting
-// func addCAKeyGenerationFields(fields map[string]*framework.FieldSchema) map[string]*framework.FieldSchema {
-// 	fields["exported"] = &framework.FieldSchema{
-// 		Type: framework.TypeString,
-// 		Description: `Must be "internal" or "exported". If set to
-// "exported", the generated private key will be
-// returned. This is your *only* chance to retrieve
-// the private key!`,
-// 	}
+	fields["server_flag"] = &framework.FieldSchema{
+		Type:    framework.TypeBool,
+		Default: true,
+		Description: `If set, certificates are flagged for server auth use.
+Defaults to true.`,
+		DisplayAttrs: &framework.DisplayAttributes{
+			Value: true,
+		},
+	}
 
-// 	fields["key_bits"] = &framework.FieldSchema{
-// 		Type:    framework.TypeInt,
-// 		Default: 2048,
-// 		Description: `The number of bits to use. You will almost
-// certainly want to change this if you adjust
-// the key_type.`,
-// 		DisplayAttrs: &framework.DisplayAttributes{
-// 			Value: 2048,
-// 		},
-// 	}
+	fields["client_flag"] = &framework.FieldSchema{
+		Type:    framework.TypeBool,
+		Default: true,
+		Description: `If set, certificates are flagged for client auth use.
+Defaults to true.`,
+		DisplayAttrs: &framework.DisplayAttributes{
+			Value: true,
+		},
+	}
 
-// 	fields["key_type"] = &framework.FieldSchema{
-// 		Type:    framework.TypeString,
-// 		Default: "rsa",
-// 		Description: `The type of key to use; defaults to RSA. "rsa"
-// and "ec" are the only valid values.`,
-// 		AllowedValues: []interface{}{"rsa", "ec"},
-// 		DisplayAttrs: &framework.DisplayAttributes{
-// 			Value: "rsa",
-// 		},
-// 	}
-// 	return fields
-// }
+	fields["code_signing_flag"] = &framework.FieldSchema{
+		Type: framework.TypeBool,
+		Description: `If set, certificates are flagged for code signing
+use. Defaults to false.`,
+	}
 
-// addCAIssueFields adds fields common to CA issuing, e.g. when returning
-// an actual certificate
-// func addCAIssueFields(fields map[string]*framework.FieldSchema) map[string]*framework.FieldSchema {
-// 	fields["max_path_length"] = &framework.FieldSchema{
-// 		Type:        framework.TypeInt,
-// 		Default:     -1,
-// 		Description: "The maximum allowable path length",
-// 	}
+	fields["email_protection_flag"] = &framework.FieldSchema{
+		Type: framework.TypeBool,
+		Description: `If set, certificates are flagged for email
+protection use. Defaults to false.`,
+	}
 
-// 	fields["permitted_dns_domains"] = &framework.FieldSchema{
-// 		Type:        framework.TypeCommaStringSlice,
-// 		Description: `Domains for which this certificate is allowed to sign or issue child certificates. If set, all DNS names (subject and alt) on child certs must be exact matches or subsets of the given domains (see https://tools.ietf.org/html/rfc5280#section-4.2.1.10).`,
-// 		DisplayAttrs: &framework.DisplayAttributes{
-// 			Name: "Permitted DNS Domains",
-// 		},
-// 	}
+	fields["key_type"] = &framework.FieldSchema{
+		Type:    framework.TypeString,
+		Default: "rsa",
+		Description: `The type of key to use; defaults to RSA. "rsa"
+and "ec" are the only valid values.`,
+		AllowedValues: []interface{}{"rsa", "ec"},
+	}
 
-// 	return fields
-// }
+	fields["key_bits"] = &framework.FieldSchema{
+		Type:    framework.TypeInt,
+		Default: 2048,
+		Description: `The number of bits to use. You will almost
+certainly want to change this if you adjust
+the key_type.`,
+	}
+
+	fields["key_usage"] = &framework.FieldSchema{
+		Type:    framework.TypeCommaStringSlice,
+		Default: []string{"DigitalSignature", "KeyAgreement", "KeyEncipherment"},
+		Description: `A comma-separated string or list of key usages (not extended
+key usages). Valid values can be found at
+https://golang.org/pkg/crypto/x509/#KeyUsage
+-- simply drop the "KeyUsage" part of the name.
+To remove all key usages from being set, set
+this value to an empty list.`,
+		DisplayAttrs: &framework.DisplayAttributes{
+			Value: "DigitalSignature,KeyAgreement,KeyEncipherment",
+		},
+	}
+
+	fields["ext_key_usage"] = &framework.FieldSchema{
+		Type:    framework.TypeCommaStringSlice,
+		Default: []string{},
+		Description: `A comma-separated string or list of extended key usages. Valid values can be found at
+https://golang.org/pkg/crypto/x509/#ExtKeyUsage
+-- simply drop the "ExtKeyUsage" part of the name.
+To remove all key usages from being set, set
+this value to an empty list.`,
+		DisplayAttrs: &framework.DisplayAttributes{
+			Name: "Extended Key Usage",
+		},
+	}
+
+	fields["ext_key_usage_oids"] = &framework.FieldSchema{
+		Type:        framework.TypeCommaStringSlice,
+		Description: `A comma-separated string or list of extended key usage oids.`,
+		DisplayAttrs: &framework.DisplayAttributes{
+			Name: "Extended Key Usage OIDs",
+		},
+	}
+
+	fields["use_csr_common_name"] = &framework.FieldSchema{
+		Type:    framework.TypeBool,
+		Default: true,
+		Description: `If set, when used with a signing profile,
+the common name in the CSR will be used. This
+does *not* include any requested Subject Alternative
+Names. Defaults to true.`,
+		DisplayAttrs: &framework.DisplayAttributes{
+			Name:  "Use CSR Common Name",
+			Value: true,
+		},
+	}
+
+	fields["use_csr_sans"] = &framework.FieldSchema{
+		Type:    framework.TypeBool,
+		Default: true,
+		Description: `If set, when used with a signing profile,
+the SANs in the CSR will be used. This does *not*
+include the Common Name (cn). Defaults to true.`,
+		DisplayAttrs: &framework.DisplayAttributes{
+			Name:  "Use CSR Subject Alternative Names",
+			Value: true,
+		},
+	}
+
+	fields["ou"] = &framework.FieldSchema{
+		Type: framework.TypeCommaStringSlice,
+		Description: `If set, OU (OrganizationalUnit) will be set to
+this value in certificates issued by this role.`,
+		DisplayAttrs: &framework.DisplayAttributes{
+			Name: "Organizational Unit",
+		},
+	}
+
+	fields["organization"] = &framework.FieldSchema{
+		Type: framework.TypeCommaStringSlice,
+		Description: `If set, O (Organization) will be set to
+this value in certificates issued by this role.`,
+	}
+
+	fields["country"] = &framework.FieldSchema{
+		Type: framework.TypeCommaStringSlice,
+		Description: `If set, Country will be set to
+this value in certificates issued by this role.`,
+	}
+
+	fields["locality"] = &framework.FieldSchema{
+		Type: framework.TypeCommaStringSlice,
+		Description: `If set, Locality will be set to
+this value in certificates issued by this role.`,
+		DisplayAttrs: &framework.DisplayAttributes{
+			Name: "Locality/City",
+		},
+	}
+
+	fields["province"] = &framework.FieldSchema{
+		Type: framework.TypeCommaStringSlice,
+		Description: `If set, Province will be set to
+this value in certificates issued by this role.`,
+		DisplayAttrs: &framework.DisplayAttributes{
+			Name: "Province/State",
+		},
+	}
+
+	fields["street_address"] = &framework.FieldSchema{
+		Type: framework.TypeCommaStringSlice,
+		Description: `If set, Street Address will be set to
+this value in certificates issued by this role.`,
+	}
+
+	fields["postal_code"] = &framework.FieldSchema{
+		Type: framework.TypeCommaStringSlice,
+		Description: `If set, Postal Code will be set to
+this value in certificates issued by this role.`,
+	}
+
+	fields["generate_lease"] = &framework.FieldSchema{
+		Type: framework.TypeBool,
+		Description: `
+If set, certificates issued/signed against this role will have Vault leases
+attached to them. Defaults to "false". Certificates can be added to the CRL by
+"vault revoke <lease_id>" when certificates are associated with leases.  It can
+also be done using the "pki/revoke" endpoint. However, when lease generation is
+disabled, invoking "pki/revoke" would be the only way to add the certificates
+to the CRL.  When large number of certificates are generated with long
+lifetimes, it is recommended that lease generation be disabled, as large amount of
+leases adversely affect the startup time of Vault.`,
+	}
+
+	fields["no_store"] = &framework.FieldSchema{
+		Type: framework.TypeBool,
+		Description: `
+If set, certificates issued/signed against this role will not be stored in the
+storage backend. This can improve performance when issuing large numbers of 
+certificates. However, certificates issued in this way cannot be enumerated
+or revoked, so this option is recommended only for certificates that are
+non-sensitive, or extremely short-lived. This option implies a value of "false"
+for "generate_lease".`,
+	}
+
+	fields["require_cn"] = &framework.FieldSchema{
+		Type:        framework.TypeBool,
+		Default:     true,
+		Description: `If set to false, makes the 'common_name' field optional while generating a certificate.`,
+		DisplayAttrs: &framework.DisplayAttributes{
+			Name: "Require Common Name",
+		},
+	}
+
+	fields["policy_identifiers"] = &framework.FieldSchema{
+		Type:        framework.TypeCommaStringSlice,
+		Description: `A comma-separated string or list of policy oids.`,
+	}
+
+	fields["basic_constraints_valid_for_non_ca"] = &framework.FieldSchema{
+		Type:        framework.TypeBool,
+		Description: `Mark Basic Constraints valid when issuing non-CA certificates.`,
+		DisplayAttrs: &framework.DisplayAttributes{
+			Name: "Basic Constraints Valid for Non-CA",
+		},
+	}
+
+	fields["not_before_duration"] = &framework.FieldSchema{
+		Type:        framework.TypeDurationSecond,
+		Default:     30,
+		Description: `The duration before now the cert needs to be created / signed.`,
+		DisplayAttrs: &framework.DisplayAttributes{
+			Value: 30,
+		},
+	}
+
+	return fields
+}
