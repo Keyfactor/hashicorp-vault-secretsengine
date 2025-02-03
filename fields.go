@@ -76,6 +76,11 @@ be larger than the role max TTL.`,
 		},
 	}
 
+	fields["metadata"] = &framework.FieldSchema{
+		Type:        framework.TypeString,
+		Description: `Metadata in JSON format to be passed along with the signing request and associated with the certificate in Command.`,
+	}
+
 	return fields
 }
 

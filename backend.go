@@ -130,7 +130,7 @@ func (b *keyfactorBackend) getClient(ctx context.Context, s logical.Storage) (*k
 }
 
 // Handle interface with Keyfactor API to enroll a certificate with given content
-func (b *keyfactorBackend) submitCSR(ctx context.Context, req *logical.Request, csr string, caName string, templateName string) ([]string, string, error) {
+func (b *keyfactorBackend) submitCSR(ctx context.Context, req *logical.Request, csr string, caName string, templateName string, metaDataJson string) ([]string, string, error) {
 	config, err := b.fetchConfig(ctx, req.Storage)
 	if err != nil {
 		return nil, "", err
@@ -156,7 +156,7 @@ func (b *keyfactorBackend) submitCSR(ctx context.Context, req *logical.Request, 
 
 	url := config.KeyfactorUrl + "/" + config.CommandAPIPath + "/Enrollment/CSR"
 	b.Logger().Debug("url: " + url)
-	bodyContent := "{\"CSR\": \"" + csr + "\",\"CertificateAuthority\":\"" + caName + "\",\"IncludeChain\": true, \"Metadata\": {}, \"Timestamp\": \"" + time + "\",\"Template\": \"" + templateName + "\",\"SANs\": {}}"
+	bodyContent := "{\"CSR\": \"" + csr + "\",\"CertificateAuthority\":\"" + caName + "\",\"IncludeChain\": true, \"Metadata\": " + metaDataJson + ", \"Timestamp\": \"" + time + "\",\"Template\": \"" + templateName + "\",\"SANs\": {}}"
 	payload := strings.NewReader(bodyContent)
 	b.Logger().Debug("body: " + bodyContent)
 	httpReq, err := http.NewRequest("POST", url, payload)
@@ -255,3 +255,15 @@ func (b *keyfactorBackend) submitCSR(ctx context.Context, req *logical.Request, 
 const keyfactorHelp = `
 The Keyfactor backend is a pki service that issues and manages certificates.
 `
+
+func (b *keyfactorBackend) isValidJSON(str string) bool {
+	var js json.RawMessage
+	err := json.Unmarshal([]byte(str), &js)
+	if err != nil {
+		b.Logger().Debug(err.Error())
+		return false
+	} else {
+		b.Logger().Debug("the metadata was able to be parsed as valid JSON")
+		return true
+	}
+}
