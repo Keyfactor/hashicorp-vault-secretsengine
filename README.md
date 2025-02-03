@@ -476,6 +476,14 @@ the Vault secrets store.
 
 !["vault3"](images/vault3.png)
 
+> [!NOTE]
+> The Certificate Authority and Template values can be passed via command parameters.  If they are omitted, the values set in the configuration are used.
+
+> [!NOTE]
+> As of v1.4, certificate Metadata is able to be provided in the command line and submitted along with the signing request.
+> example: `vault write keyfactor/issue/hashiIssuer common_name="test.com" dns_sans="test.com" metadata='{ \"testMetadata\": \"arbitrary string value\" }' ca="myCA"`
+> **Make sure that the quotation marks as escaped, as above, or an error will be returned.**
+
 ### Viewing Certificates
 
 After certificates are stored in the secrets store, you can then retrieve those certificates at a later time if
