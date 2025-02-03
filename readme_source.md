@@ -452,6 +452,9 @@ the Vault secrets store.
 
 !["vault3"](images/vault3.png)
 
+> [!NOTE]
+> The Certificate Authority and Template values can be passed via command parameters.  If they are omitted, the values set in the configuration are used.
+
 ### Viewing Certificates
 
 After certificates are stored in the secrets store, you can then retrieve those certificates at a later time if
