@@ -262,7 +262,21 @@ func (b *keyfactorBackend) pathSign(ctx context.Context, req *logical.Request, d
 	b.Logger().Debug("CA Name parameter = " + caName)
 	b.Logger().Debug("Template name parameter = " + templateName)
 
-	certs, serial, errr := b.submitCSR(ctx, req, csr, caName, templateName)
+	metadata := data.Get("metadata").(string)
+
+	if metadata == "" {
+		metadata = "{}"
+	}
+
+	// verify that any passed metadata string is valid JSON
+
+	if !b.isValidJSON(metadata) {
+		err := fmt.Errorf("'%s' is not a valid JSON string", metadata)
+		b.Logger().Error(err.Error())
+		return nil, err
+	}
+
+	certs, serial, errr := b.submitCSR(ctx, req, csr, caName, templateName, metadata)
 
 	if errr != nil {
 		return nil, fmt.Errorf("could not sign csr: %s", errr)
@@ -411,6 +425,19 @@ func (b *keyfactorBackend) pathIssueSignCert(ctx context.Context, req *logical.R
 		err_resp = fmt.Errorf("at least one DNS SAN is required to match the supplied Common Name for RFC 2818 compliance")
 	}
 
+	metadata := data.Get("metadata").(string)
+
+	if metadata == "" {
+		metadata = "{}"
+	}
+
+	// verify that any passed metadata string is valid JSON
+
+	if !b.isValidJSON(metadata) {
+		err_resp := fmt.Errorf("'%s' is not a valid JSON string", metadata)
+		b.Logger().Error(err_resp.Error())
+	}
+
 	if err_resp != nil {
 		return nil, err_resp
 	}
@@ -418,7 +445,7 @@ func (b *keyfactorBackend) pathIssueSignCert(ctx context.Context, req *logical.R
 	//generate and submit CSR
 	b.Logger().Debug("generating the CSR...")
 	csr, key := b.generateCSR(cn.(string), ip_sans, dns_sans)
-	certs, serial, errr := b.submitCSR(ctx, req, csr, caName, templateName)
+	certs, serial, errr := b.submitCSR(ctx, req, csr, caName, templateName, metadata)
 
 	if errr != nil {
 		return nil, fmt.Errorf("could not enroll certificate: %s", errr)

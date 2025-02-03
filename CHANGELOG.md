@@ -1,6 +1,7 @@
 - 1.4.0
   - Added support for oAuth2 authentication to Keyfactor Command.
   - Included the ability to specify CA and Template via command parameters
+  - Included the ability to pass metadata along with the request
 
 - 1.3.1 
   - Fix for issue where plugin was not enforcing plugin-side role limitations for AllowedDomains and AllowSubDomains, and was relying exclusively on the certificate template for these values.
