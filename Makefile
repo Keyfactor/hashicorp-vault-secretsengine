@@ -1,18 +1,21 @@
 BINARY = "keyfactor"
 VERSION = "v1.3.1"
 
-GOARCH = amd64
+UNAME_S := $(shell uname -s)
+UNAME_M := $(shell uname -m)
 
-UNAME = $(shell uname -s)
+ifeq ($(UNAME_S),Linux)
+	OS = linux
+else ifeq ($(UNAME_S),Darwin)
+	OS = darwin
+endif
 
-OS = linux
-
-ifndef OS
-	ifeq ($(UNAME), Linux)
-		OS = linux
-	else ifeq ($(UNAME), Darwin)
-		OS = darwin
-	endif
+ifeq ($(UNAME_M),x86_64)
+	GOARCH = amd64
+else ifeq ($(UNAME_M),arm64)
+	GOARCH = arm64
+else ifeq ($(UNAME_M),i386)
+	GOARCH = 386
 endif
 
 .DEFAULT_GOAL := all
@@ -20,20 +23,33 @@ endif
 all: fmt build start
 
 build:
-	GOOS=$(OS) GOARCH="$(GOARCH)" go build -o vault/plugins/keyfactor cmd/keyfactor/main.go
+	GOOS=$(OS) GOARCH=$(GOARCH) go build -o vault/plugins/keyfactor cmd/keyfactor/main.go
 
 start:
-	vault server -dev -dev-root-token-id=root -dev-plugin-dir=/vault/plugins
+	vault server -dev -dev-root-token-id=root -dev-plugin-dir=./vault/plugins
+
+register:
+	vault write sys/plugins/catalog/secret/keyfactor sha_256=$(shell shasum -a 256 ./vault/plugins/keyfactor | cut -d ' ' -f 1) command="keyfactor"
 
 enable:
+	export VAULT_ADDR=http://localhost:8200
+	export VAULT_TOKEN=root
 	vault secrets enable keyfactor
+
+config_oauth:
+	vault write keyfactor/config \
+		url="https://int1230-oauth.eastus2.cloudapp.azure.com" \
+		client_id="vault-secrets-engine" \
+		client_secret="c6rxzs6Hz8JjlkFR87ra18WBqlhXdwMO" \
+		token_url="https://int1230-oauth.eastus2.cloudapp.azure.com/oauth2/token" \
+		template="SslServerProfile" \
+		CA="TestDriveSub-G1"
 
 clean:
 	rm -f ./vault/plugins/keyfactor
 
 fmt:
 	go fmt $$(go list ./...)
-
 
 release:
 	GOOS=darwin GOARCH=amd64 go build -o ./bin/${BINARY}_${VERSION}_darwin_amd64
@@ -49,5 +65,4 @@ release:
 	GOOS=windows GOARCH=386 go build -o ./bin/${BINARY}_${VERSION}_windows_386
 	GOOS=windows GOARCH=amd64 go build -o ./bin/${BINARY}_${VERSION}_windows_amd64
 
-
-.PHONY: build clean fmt start enable
+.PHONY: build clean fmt start enable register release

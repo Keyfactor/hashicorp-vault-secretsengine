@@ -7,16 +7,14 @@
  *  and limitations under the License.
  */
 
-package keyfactor
+package kfbackend
 
 import (
 	"context"
-	b64 "encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"strings"
 	"sync"
@@ -27,7 +25,9 @@ import (
 	"github.com/hashicorp/vault/sdk/logical"
 )
 
-//var config map[string]string
+const (
+	operationPrefixKeyfactor string = "keyfactor"
+)
 
 // Factory configures and returns backend
 func Factory(ctx context.Context, conf *logical.BackendConfig) (logical.Backend, error) {
@@ -42,7 +42,7 @@ func Factory(ctx context.Context, conf *logical.BackendConfig) (logical.Backend,
 // // Store certificates by serial number
 type keyfactorBackend struct {
 	*framework.Backend
-	lock         sync.RWMutex
+	configLock   sync.RWMutex
 	cachedConfig *keyfactorConfig
 	client       *keyfactorClient
 }
@@ -68,9 +68,10 @@ func backend() *keyfactorBackend {
 			pathCA(&b),
 			pathCerts(&b),
 		),
-		Secrets:     []*framework.Secret{},
-		BackendType: logical.TypeLogical,
-		Invalidate:  b.invalidate,
+		Secrets:        []*framework.Secret{},
+		BackendType:    logical.TypeLogical,
+		Invalidate:     b.invalidate,
+		InitializeFunc: b.Initialize,
 	}
 	return &b
 }
@@ -78,9 +79,20 @@ func backend() *keyfactorBackend {
 // reset clears any client configuration for a new
 // backend to be configured
 func (b *keyfactorBackend) reset() {
-	b.lock.Lock()
-	defer b.lock.Unlock()
+	b.configLock.RLock()
+	defer b.configLock.RUnlock()
+	b.cachedConfig = nil
 	b.client = nil
+
+}
+
+func (b *keyfactorBackend) Initialize(ctx context.Context, req *logical.InitializationRequest) error {
+	b.configLock.RLock()
+	defer b.configLock.RUnlock()
+	if req == nil {
+		return fmt.Errorf("initialization request is nil")
+	}
+	return nil
 }
 
 // invalidate clears an existing client configuration in
@@ -94,24 +106,32 @@ func (b *keyfactorBackend) invalidate(ctx context.Context, key string) {
 // getClient locks the backend as it configures and creates a
 // a new client for the target API
 func (b *keyfactorBackend) getClient(ctx context.Context, s logical.Storage) (*keyfactorClient, error) {
-	b.lock.RLock()
-	unlockFunc := b.lock.RUnlock
-	defer func() { unlockFunc() }()
+	b.configLock.RLock()
+	defer b.configLock.RUnlock()
 
 	if b.client != nil {
 		return b.client, nil
 	}
 
-	b.lock.RUnlock()
-	b.lock.Lock()
-	unlockFunc = b.lock.Unlock
+	// get configuration
+	config, err := b.fetchConfig(ctx, s)
+	if err != nil {
+		return nil, err
+	}
+	if config == nil {
+		return nil, errors.New("configuration is empty")
+	}
 
-	return nil, fmt.Errorf("need to return client")
+	b.client, err = newClient(config, b)
+	if err != nil {
+		return nil, err
+	}
+	return b.client, nil
 }
 
 // Handle interface with Keyfactor API to enroll a certificate with given content
-func (b *keyfactorBackend) submitCSR(ctx context.Context, req *logical.Request, csr string, caName string, templateName string) ([]string, string, error) {
-	config, err := b.config(ctx, req.Storage)
+func (b *keyfactorBackend) submitCSR(ctx context.Context, req *logical.Request, csr string, caName string, templateName string, metaDataJson string) ([]string, string, error) {
+	config, err := b.fetchConfig(ctx, req.Storage)
 	if err != nil {
 		return nil, "", err
 	}
@@ -119,38 +139,40 @@ func (b *keyfactorBackend) submitCSR(ctx context.Context, req *logical.Request, 
 		return nil, "", errors.New("configuration is empty")
 	}
 
-	ca := config.CertAuthority
-	template := config.CertTemplate
-
-	creds := config.Username + ":" + config.Password
-	encCreds := b64.StdEncoding.EncodeToString([]byte(creds))
-
 	location, _ := time.LoadLocation("UTC")
 	t := time.Now().In(location)
 	time := t.Format("2006-01-02T15:04:05")
 
-	// This is only needed when running as a vault extension
-	b.Logger().Debug("Closing idle connections")
-	http.DefaultClient.CloseIdleConnections()
+	// get client
+	client, err := b.getClient(ctx, req.Storage)
+	if err != nil {
+		return nil, "", fmt.Errorf("error getting client: %w", err)
+	}
 
-	// Build request
-	url := config.KeyfactorUrl + "/KeyfactorAPI/Enrollment/CSR"
+	b.Logger().Debug("Closing idle connections")
+	client.httpClient.CloseIdleConnections()
+
+	// build request parameter structure
+
+	url := config.KeyfactorUrl + "/" + config.CommandAPIPath + "/Enrollment/CSR"
 	b.Logger().Debug("url: " + url)
-	bodyContent := "{\"CSR\": \"" + csr + "\",\"CertificateAuthority\":\"" + ca + "\",\"IncludeChain\": true, \"Metadata\": {}, \"Timestamp\": \"" + time + "\",\"Template\": \"" + template + "\",\"SANs\": {}}"
+	bodyContent := "{\"CSR\": \"" + csr + "\",\"CertificateAuthority\":\"" + caName + "\",\"IncludeChain\": true, \"Metadata\": " + metaDataJson + ", \"Timestamp\": \"" + time + "\",\"Template\": \"" + templateName + "\",\"SANs\": {}}"
 	payload := strings.NewReader(bodyContent)
 	b.Logger().Debug("body: " + bodyContent)
 	httpReq, err := http.NewRequest("POST", url, payload)
+
 	if err != nil {
 		b.Logger().Info("Error forming request: {{err}}", err)
 	}
+
 	httpReq.Header.Add("x-keyfactor-requested-with", "APIClient")
 	httpReq.Header.Add("content-type", "application/json")
-	httpReq.Header.Add("authorization", "Basic "+encCreds)
 	httpReq.Header.Add("x-certificateformat", "PEM")
 
 	// Send request and check status
+
 	b.Logger().Debug("About to connect to " + config.KeyfactorUrl + "for csr submission")
-	res, err := http.DefaultClient.Do(httpReq)
+	res, err := client.httpClient.Do(httpReq)
 	if err != nil {
 		b.Logger().Info("CSR Enrollment failed: {{err}}", err.Error())
 		return nil, "", err
@@ -166,7 +188,7 @@ func (b *keyfactorBackend) submitCSR(ctx context.Context, req *logical.Request, 
 	// Read response and return certificate and key
 
 	defer res.Body.Close()
-	body, err := ioutil.ReadAll(res.Body)
+	body, err := io.ReadAll(res.Body)
 	if err != nil {
 		b.Logger().Error("Error reading response: {{err}}", err)
 		return nil, "", err
@@ -233,3 +255,15 @@ func (b *keyfactorBackend) submitCSR(ctx context.Context, req *logical.Request, 
 const keyfactorHelp = `
 The Keyfactor backend is a pki service that issues and manages certificates.
 `
+
+func (b *keyfactorBackend) isValidJSON(str string) bool {
+	var js json.RawMessage
+	err := json.Unmarshal([]byte(str), &js)
+	if err != nil {
+		b.Logger().Debug(err.Error())
+		return false
+	} else {
+		b.Logger().Debug("the metadata was able to be parsed as valid JSON")
+		return true
+	}
+}
