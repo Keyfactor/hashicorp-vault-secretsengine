@@ -7,56 +7,101 @@
  *  and limitations under the License.
  */
 
-package keyfactor
+package kfbackend
 
 import (
 	"errors"
 	"fmt"
-	"log"
-	"strings"
+	"net/http"
 
-	"github.com/Keyfactor/keyfactor-go-client/api"
+	"github.com/Keyfactor/keyfactor-auth-client-go/auth_providers"
 )
 
 type keyfactorClient struct {
-	*api.Client
+	httpClient *http.Client
 }
 
-func newClient(config *keyfactorConfig) (*api.Client, error) {
+func newClient(config *keyfactorConfig, b *keyfactorBackend) (*keyfactorClient, error) {
+	client := new(keyfactorClient)
+
 	if config == nil {
 		return nil, errors.New("client configuration was nil")
 	}
 
-	if config.Username == "" {
-		return nil, errors.New("client username was not defined")
-	}
-
-	if config.Password == "" {
-		return nil, errors.New("client password was not defined")
-	}
-
 	if config.KeyfactorUrl == "" {
-		return nil, errors.New("client URL was not defined")
+		return nil, errors.New("the URL to Command was not defined")
 	}
-	username := strings.Split(config.Username, "//")[1]
-	domain := strings.Split(config.Username, "//")[1]
+
 	hostname := config.KeyfactorUrl
-	if strings.HasPrefix(config.KeyfactorUrl, "http") {
-		hostname = strings.Split(config.KeyfactorUrl, "//")[1] //extract just the domain
+
+	isBasicAuth := config.Username != "" && config.Password != ""
+	isOAuth := (config.ClientId != "" && config.ClientSecret != "" && config.TokenUrl != "") || config.AccessToken != ""
+
+	if !isBasicAuth && !isOAuth {
+		return nil, errors.New(
+			"invalid Keyfactor Command client configuration, " +
+				"please provide a valid Basic auth or OAuth configuration",
+		)
 	}
 
-	var clientAuth api.AuthConfig
-	clientAuth.Username = username
-	clientAuth.Password = config.Password
-	clientAuth.Domain = domain
-	clientAuth.Hostname = hostname
+	oAuthConfig := &auth_providers.CommandConfigOauth{}
+	basicAuthConfig := &auth_providers.CommandAuthConfigBasic{}
 
-	fmt.Printf("clientAuth values: \n %s", clientAuth)
+	if isBasicAuth {
+		b.Logger().Debug(fmt.Sprintf("using basic auth with username %s, domain %s and password (hidden)", config.Username, config.Domain))
 
-	c, err := api.NewKeyfactorClient(&clientAuth)
-	if err != nil {
-		log.Fatalf("[ERROR] creating Keyfactor client: %s", err)
+		basicAuthConfig.WithCommandHostName(hostname).
+			WithCommandAPIPath(config.CommandAPIPath).
+			WithSkipVerify(config.SkipTLSVerify).
+			WithCommandCACert(config.CommandCertPath)
+		bErr := basicAuthConfig.
+			WithUsername(config.Username).
+			WithPassword(config.Password).
+			WithDomain(config.Domain).
+			Authenticate()
+
+		if bErr != nil {
+			errMsg := fmt.Sprintf("[ERROR] unable to authenticate with provided basic auth credentials: %s", bErr.Error())
+			b.Logger().Error(errMsg)
+			return nil, bErr
+		} else {
+			b.Logger().Debug("successfully authenticated using basic auth")
+		}
+
+		client.httpClient, bErr = basicAuthConfig.GetHttpClient()
+
+		if bErr != nil {
+			errMsg := fmt.Sprintf("[ERROR] there was an error retreiving the basic auth http client: %s", bErr.Error())
+			b.Logger().Error(errMsg)
+			return nil, bErr
+		}
+
+	} else if isOAuth {
+		b.Logger().Debug(fmt.Sprintf("using oAuth authentication with client_id: %s, token_url %s and client_secret: (hidden)", config.ClientId, config.TokenUrl))
+		_ = oAuthConfig.WithCommandHostName(hostname).
+			WithCommandAPIPath(config.CommandAPIPath).
+			WithSkipVerify(config.SkipTLSVerify).
+			WithCommandCACert(config.CommandCertPath)
+
+		oErr := oAuthConfig.
+			WithClientId(config.ClientId).
+			WithClientSecret(config.ClientSecret).
+			WithTokenUrl(config.TokenUrl).
+			WithAccessToken(config.AccessToken).
+			Authenticate()
+
+		if oErr != nil {
+			errMsg := fmt.Sprintf("[ERROR] unable to authenticate with provided oAuth credentials: %s", oErr.Error())
+			b.Logger().Error(errMsg)
+			return nil, oErr
+		}
+
+		client.httpClient, oErr = oAuthConfig.GetHttpClient()
+		if oErr != nil {
+			errMsg := fmt.Sprintf("[ERROR] there was an error retreiving the oAuth http client: %s", oErr.Error())
+			b.Logger().Error(errMsg)
+			return nil, oErr
+		}
 	}
-
-	return c, err
+	return client, nil
 }
