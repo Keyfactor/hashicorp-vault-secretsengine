@@ -33,6 +33,7 @@ func newClient(config *keyfactorConfig, b *keyfactorBackend) (*keyfactorClient, 
 	}
 
 	hostname := config.KeyfactorUrl
+	b.Logger().Debug(fmt.Sprintf("using hostname %s", hostname))
 
 	isBasicAuth := config.Username != "" && config.Password != ""
 	isOAuth := (config.ClientId != "" && config.ClientSecret != "" && config.TokenUrl != "") || config.AccessToken != ""
@@ -48,12 +49,33 @@ func newClient(config *keyfactorConfig, b *keyfactorBackend) (*keyfactorClient, 
 	basicAuthConfig := &auth_providers.CommandAuthConfigBasic{}
 
 	if isBasicAuth {
-		b.Logger().Debug(fmt.Sprintf("using basic auth with username %s, domain %s and password (hidden)", config.Username, config.Domain))
+		b.Logger().Debug(
+			fmt.Sprintf(
+				"using basic auth with username %s, domain %s and password (hidden)",
+				config.Username,
+				config.Domain,
+			),
+		)
+		b.Logger().With(
+			"url", hostname,
+			"api_path", config.CommandAPIPath,
+			"skip_verify", config.SkipTLSVerify,
+			"ca_cert", config.CommandCertPath,
+		).Debug("setting base Command configuration")
 
 		basicAuthConfig.WithCommandHostName(hostname).
 			WithCommandAPIPath(config.CommandAPIPath).
 			WithSkipVerify(config.SkipTLSVerify).
 			WithCommandCACert(config.CommandCertPath)
+
+		b.Logger().With(
+			"username",
+			config.Username,
+			"domain",
+			config.Domain,
+			"password",
+			"(hidden)",
+		).Debug("setting basic auth credentials")
 		bErr := basicAuthConfig.
 			WithUsername(config.Username).
 			WithPassword(config.Password).
@@ -61,7 +83,10 @@ func newClient(config *keyfactorConfig, b *keyfactorBackend) (*keyfactorClient, 
 			Authenticate()
 
 		if bErr != nil {
-			errMsg := fmt.Sprintf("[ERROR] unable to authenticate with provided basic auth credentials: %s", bErr.Error())
+			errMsg := fmt.Sprintf(
+				"[ERROR] unable to authenticate with provided basic auth credentials: %s",
+				bErr.Error(),
+			)
 			b.Logger().Error(errMsg)
 			return nil, bErr
 		} else {
@@ -77,12 +102,24 @@ func newClient(config *keyfactorConfig, b *keyfactorBackend) (*keyfactorClient, 
 		}
 
 	} else if isOAuth {
-		b.Logger().Debug(fmt.Sprintf("using oAuth authentication with client_id: %s, token_url %s and client_secret: (hidden)", config.ClientId, config.TokenUrl))
+		b.Logger().With(
+			"url", hostname,
+			"api_path", config.CommandAPIPath,
+			"skip_verify", config.SkipTLSVerify,
+			"ca_cert", config.CommandCertPath,
+		).Debug("setting base Command configuration")
 		_ = oAuthConfig.WithCommandHostName(hostname).
 			WithCommandAPIPath(config.CommandAPIPath).
 			WithSkipVerify(config.SkipTLSVerify).
 			WithCommandCACert(config.CommandCertPath)
 
+		b.Logger().Debug(
+			fmt.Sprintf(
+				"using oAuth authentication with client_id: %s, token_url %s and client_secret: (hidden)",
+				config.ClientId,
+				config.TokenUrl,
+			),
+		)
 		oErr := oAuthConfig.
 			WithClientId(config.ClientId).
 			WithClientSecret(config.ClientSecret).
