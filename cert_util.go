@@ -14,6 +14,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha1"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
@@ -45,9 +46,11 @@ func fetchCAInfo(ctx context.Context, req *logical.Request, b *keyfactorBackend)
 	}
 
 	caEntry, err := req.Storage.Get(ctx, "ca")
+
 	if err != nil {
 		return logical.ErrorResponse("error fetching ca: %s", err), nil
 	}
+
 	if caEntry != nil {
 		var r map[string]interface{}
 		json.Unmarshal(caEntry.Value, &r)
@@ -59,8 +62,13 @@ func fetchCAInfo(ctx context.Context, req *logical.Request, b *keyfactorBackend)
 		return resp, nil
 	}
 
-	// if not we search certs for 'CA -eq "<ca_name>" AND CertState -eq "6"'
-	//
+	// if not, we retreive the CA entry from the "CertificateAuthorities" endpoint
+
+	// then we look up certs with CertificateAuthorityId = the CA ID.
+
+	// if at least one exists, we download the cert and chain
+
+	// if not; we can't get it yet; return appropriate error
 
 	caId, err := getCAId(ctx, req, b)
 	if err != nil {
@@ -402,6 +410,52 @@ func parseOtherSANs(others []string) (map[string][]string, error) {
 
 func normalizeSerial(serial string) string {
 	return strings.Replace(strings.ToLower(serial), ":", "-", -1)
+}
+
+// ensureCorrectOrder ensures the correct order of the certificate chain using a known leaf thumbprint
+func ensureCorrectOrder(chain []*x509.Certificate, leafThumbprint string) []*x509.Certificate {
+	var leaf *x509.Certificate
+	var intermediates []*x509.Certificate
+	var root *x509.Certificate
+
+	// Identify the leaf, intermediate(s), and root
+	for _, cert := range chain {
+		if cert.CheckSignatureFrom(cert) == nil {
+			root = cert // Verified self-signed root
+		} else if getCertThumbprint(cert) == leafThumbprint {
+			leaf = cert
+		} else {
+			intermediates = append(intermediates, cert)
+		}
+	}
+
+	// Sort intermediates by issuer-subject relationship
+	sortedIntermediates := make([]*x509.Certificate, 0, len(intermediates))
+	remaining := append([]*x509.Certificate{}, intermediates...)
+
+	for len(remaining) > 0 {
+		for i, cert := range remaining {
+			if len(sortedIntermediates) == 0 || sortedIntermediates[len(sortedIntermediates)-1].Subject.String() == cert.Issuer.String() {
+				sortedIntermediates = append(sortedIntermediates, cert)
+				remaining = append(remaining[:i], remaining[i+1:]...)
+				break
+			}
+		}
+	}
+
+	// Construct ordered chain
+	orderedChain := []*x509.Certificate{leaf}
+	orderedChain = append(orderedChain, sortedIntermediates...)
+	if root != nil {
+		orderedChain = append(orderedChain, root)
+	}
+	return orderedChain
+}
+
+// getCertThumbprint computes the SHA-1 thumbprint of a certificate
+func getCertThumbprint(cert *x509.Certificate) string {
+	hash := sha1.Sum(cert.Raw)
+	return fmt.Sprintf("%x", hash)
 }
 
 type KeyfactorCertResponse []struct {
