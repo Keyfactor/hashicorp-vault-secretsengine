@@ -1,3 +1,7 @@
+- 1.4.1
+  - Updated Keyfactor Client library to 1.2.0
+  - Now passing scopes and audience along with oAuth token request.
+  
 - 1.4.0
   - Added support for oAuth2 authentication to Keyfactor Command.
   - Included the ability to specify CA and Template via command parameters
