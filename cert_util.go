@@ -25,16 +25,18 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
 	"github.com/hashicorp/vault/sdk/helper/errutil"
 	"github.com/hashicorp/vault/sdk/logical"
+	"go.mozilla.org/pkcs7"
 )
 
 // fetch the CA info from keyfactor
-func fetchCAInfo(ctx context.Context, req *logical.Request, b *keyfactorBackend) (response *logical.Response, retErr error) {
+func fetchCAInfo(ctx context.Context, req *logical.Request, b *keyfactorBackend, caName string, includeChain bool) (response *logical.Response, retErr error) {
+	var resp *logical.Response
+
 	// first we see if we have previously retreived the CA or chain
 	config, err := b.fetchConfig(ctx, req.Storage)
 	if err != nil {
@@ -43,40 +45,68 @@ func fetchCAInfo(ctx context.Context, req *logical.Request, b *keyfactorBackend)
 	if config == nil {
 		return logical.ErrorResponse("could not load configuration"), nil
 	}
+	storagePath := fmt.Sprintf("ca/%s", caName) // the storage path for the ca cert is "ca/{{ca name}}"
 
-	caEntry, err := req.Storage.Get(ctx, "ca")
+	if includeChain {
+		storagePath = fmt.Sprintf("%s_chain", storagePath) // the storage path for the ca chain is "ca/{{ca name}}_chain"
+	}
+	b.Logger().Debug("local storage path = %s", storagePath)
+
+	caEntry, err := req.Storage.Get(ctx, storagePath)
+
 	if err != nil {
 		return logical.ErrorResponse("error fetching ca: %s", err), nil
 	}
-	if caEntry != nil {
-		var r map[string]interface{}
+
+	if caEntry != nil { // the CA is stored locally, just need to return it
+		var r string
 		json.Unmarshal(caEntry.Value, &r)
 		b.Logger().Debug("stored ca = ", r)
 
-		resp := &logical.Response{
-			Data: r,
+		if includeChain {
+			resp = &logical.Response{
+				Data: map[string]interface{}{
+					"CA Chain": r,
+				},
+			}
+		} else {
+			resp = &logical.Response{
+				Data: map[string]interface{}{
+					"CA Certificate": r,
+				},
+			}
 		}
+
 		return resp, nil
 	}
 
-	// if not we search certs for 'CA -eq "<ca_name>" AND CertState -eq "6"'
-	//
+	// it hasn't been stored locally, we we need to retreive a certificate issued by the CA
+	// and then extract the chain
 
-	caId, err := getCAId(ctx, req, b)
+	issued_certs, err := fetchCertIssuedByCA(ctx, req, b, caName) // we get the ID of a cert issued by the CA
+
 	if err != nil {
-		return nil, errutil.InternalError{Err: fmt.Sprintf("error getting CA ID from Keyfactor: %s", err)}
+		return nil, errutil.InternalError{Err: fmt.Sprintf("failed to retreive any cert issued by the CA: %s", err)}
 	}
 
-	// with the certificate Id, we can retreive and store the CA certificate from Keyfactor
-
-	caCert, err := fetchCertFromKeyfactor(ctx, req, b, caId, false)
-	if err != nil {
-		return nil, errutil.InternalError{Err: fmt.Sprintf("error getting certificate from Keyfactor: %s", err)}
+	if len(issued_certs) == 0 {
+		return nil, fmt.Errorf("no certificates issued by %s were found", caName)
 	}
 
-	certBytes, _ := base64.StdEncoding.DecodeString(caCert)
-	certString := string(certBytes[:])
-	caStorageEntry, err := logical.StorageEntryJSON("ca/", certString)
+	issued_cert := issued_certs[0]
+
+	b.Logger().Trace("extracting the CA and Chain from the retreived cert.")
+	ca_chain, ca_cert, err := fetchChainAndCAForCert(ctx, req, b, issued_cert.ID) // we download the full cert and chain
+	if err != nil {
+		b.Logger().Error("error getting full chain and CA for cert: %s", err)
+		return nil, err
+	}
+	b.Logger().Trace("extracted ca and chain from cert. chain has a length of %d \n", len(ca_chain))
+
+	// now we have the full cert + chain, in PEM format
+
+	// store the CA cert locally
+	caStorageEntry, err := logical.StorageEntryJSON("ca/"+caName, ca_cert)
 	if err != nil {
 		b.Logger().Error("error creating ca entry", err)
 	}
@@ -86,141 +116,126 @@ func fetchCAInfo(ctx context.Context, req *logical.Request, b *keyfactorBackend)
 		b.Logger().Error("error storing the ca locally", err)
 	}
 
-	cn := config.CertAuthority
-	resp := &logical.Response{
-		Data: map[string]interface{}{
-			cn: certString,
-		},
-	}
+	ca_chain_combined := strings.Join(ca_chain, "") // store as a single PEM chain
 
-	return resp, nil
-}
-
-func fetchCaChainInfo(ctx context.Context, req *logical.Request, b *keyfactorBackend) (response *logical.Response, retErr error) {
-	// first we see if we have previously retreived the CA or chain
-	caEntry, err := req.Storage.Get(ctx, "ca_chain")
+	// store the full chain locally
+	caChainStorageEntry, err := logical.StorageEntryJSON("ca/"+caName+"_chain", ca_chain_combined)
 	if err != nil {
-		return logical.ErrorResponse("error fetching ca_chain: %s", err), nil
+		b.Logger().Error("error creating ca chain entry", err)
 	}
-	if caEntry != nil {
-		var r map[string]interface{}
-		json.Unmarshal(caEntry.Value, &r)
-		b.Logger().Debug("caChainEntry.Value = ", r)
 
-		resp := &logical.Response{
-			Data: r,
+	err = req.Storage.Put(ctx, caChainStorageEntry)
+	if err != nil {
+		b.Logger().Error("error storing the ca chain locally", err)
+	}
+
+	if includeChain {
+		resp = &logical.Response{
+			Data: map[string]interface{}{
+				"CA Chain": ca_chain,
+			},
 		}
-		return resp, nil
-	}
-
-	// if not we search certs for 'CA -eq "keyfactor-KFTRAIN-CA" AND CertState -eq "6"'
-	//
-
-	caId, err := getCAId(ctx, req, b)
-	if err != nil {
-		return nil, errutil.InternalError{Err: fmt.Sprintf("error getting CA ID from Keyfactor: %s", err)}
-	}
-
-	// with the certificate Id, we can retreive and store the CA certificate from Keyfactor
-
-	caCert, err := fetchCertFromKeyfactor(ctx, req, b, caId, true)
-	if err != nil {
-		return nil, errutil.InternalError{Err: fmt.Sprintf("error getting certificate from Keyfactor: %s", err)}
-	}
-
-	certBytes, _ := base64.StdEncoding.DecodeString(caCert)
-	certString := string(certBytes[:])
-	caStorageEntry, err := logical.StorageEntryJSON("ca_chain/", certString)
-	if err != nil {
-		b.Logger().Error("error creating ca entry", err)
-	}
-
-	err = req.Storage.Put(ctx, caStorageEntry)
-	if err != nil {
-		b.Logger().Error("error storing the ca locally", err)
-	}
-
-	resp := &logical.Response{
-		Data: map[string]interface{}{
-			"CA_CHAIN": certString,
-		},
+	} else {
+		resp = &logical.Response{
+			Data: map[string]interface{}{
+				"CA Certificate": ca_cert,
+			},
+		}
 	}
 
 	return resp, nil
 }
 
-func getCAId(ctx context.Context, req *logical.Request, b *keyfactorBackend) (string, error) {
+func fetchChainAndCAForCert(ctx context.Context, req *logical.Request, b *keyfactorBackend, kfCertId int) ([]string, string, error) {
 	config, err := b.fetchConfig(ctx, req.Storage)
 	if err != nil {
-		return "", err
+		return nil, "", err
 	}
 	if config == nil {
-		return "", errors.New("unable to load configuration")
+		return nil, "", errors.New("unable to load configuration")
 	}
 
-	if config.CertAuthority == "" {
-		b.Logger().Error("no value in config for CA.")
-		return "", nil
-	}
-
-	ca_name := strings.Split(config.CertAuthority, `\\`)[1]
-
-	// This is only needed when running as a vault extension
-	b.Logger().Debug("Closing idle connections")
+	// get the client
 	client, err := b.getClient(ctx, req.Storage)
 	if err != nil {
 		b.Logger().Error("unable to create the http client")
 	}
+	// This is only needed when running as a vault extension
+	b.Logger().Debug("Closing idle connections")
 	client.httpClient.CloseIdleConnections()
 
-	ca_name = url.QueryEscape(ca_name)
-
-	//creds := config.Username + ":" + config.Password
-	//encCreds := b64.StdEncoding.EncodeToString([]byte(creds))
-
 	// Build request
-
-	url := config.KeyfactorUrl + "/" + config.CommandAPIPath + "/Certificates?pq.queryString=CA%20-eq%20%22" + ca_name + "%22%20AND%20CertState%20-eq%20%226%22" // CertState 6 = cert
+	url := config.KeyfactorUrl + "/" + config.CommandAPIPath + "/Certificates/Download"
 	b.Logger().Debug("url: " + url)
-	httpReq, err := http.NewRequest("GET", url, nil)
+	bodyContent := fmt.Sprintf(`{"CertID": %d, "IncludeChain": true, "ChainOrder": "endentityfirst" }`, kfCertId)
+	payload := strings.NewReader(bodyContent)
+	b.Logger().Debug("body: " + bodyContent)
+	httpReq, err := http.NewRequest("POST", url, payload)
 	if err != nil {
-		b.Logger().Info("Error forming request: {{err}}", err)
+		b.Logger().Info("Error forming request: %s", err)
 	}
-	//httpReq.Header.Add("x-keyfactor-requested-with", "APIClient")
-	httpReq.Header.Add("x-keyfactor-api-version", "1")
-	//httpReq.Header.Add("authorization", "Basic "+encCreds)
+	httpReq.Header.Add("x-keyfactor-requested-with", "APIClient")
+	httpReq.Header.Add("content-type", "application/json")
+	httpReq.Header.Add("x-certificateformat", "P7B")
 
 	// Send request and check status
-	b.Logger().Debug("About to connect to " + config.KeyfactorUrl + "for ca retrieval")
+	b.Logger().Debug("About to connect to " + config.KeyfactorUrl + "for cert retrieval")
 	res, err := client.httpClient.Do(httpReq)
 	if err != nil {
-		b.Logger().Info("failed getting CA: {{err}}", err)
-		return "", err
+		b.Logger().Info("failed getting cert: %s", err)
+		return nil, "", err
 	}
 	if res.StatusCode != 200 {
 		b.Logger().Error("request failed: server returned" + fmt.Sprint(res.StatusCode))
-		defer res.Body.Close()
-		body, err := io.ReadAll(res.Body)
-		if err != nil {
-			b.Logger().Info("Error reading response: {{err}}", err)
-			return "", err
-		}
-		b.Logger().Error("Error response = " + fmt.Sprint(body))
-		return "", fmt.Errorf("error querying certificates for CA. returned status = %d\n ", res.StatusCode)
+		b.Logger().Error("Error response = " + fmt.Sprint(res.Body))
+		return nil, "", fmt.Errorf("error downloading certificate. returned status = %d\n ", res.StatusCode)
 	}
 
 	// Read response and return certificate and key
 	defer res.Body.Close()
-
 	// Parse response
-	var r KeyfactorCertResponse
-	err = json.NewDecoder(res.Body).Decode(&r)
+
+	body, err := io.ReadAll(res.Body)
 	if err != nil {
-		panic(err)
+		b.Logger().Info("Error reading response: %s", err)
+		return nil, "", err
 	}
+	var r KeyfactorCertDownloadResponse
+	json.Unmarshal(body, &r)
 	b.Logger().Debug("response = ", r)
 
-	return fmt.Sprintf("%d", r[0].ID), nil
+	certs, p7bErr := ConvertBase64P7BtoCertificates(r.Content)
+	if p7bErr != nil {
+		return nil, "", p7bErr
+	}
+
+	// first cert is leaf, next cert is CA,  remaining certs are chain
+	ca_chain := certs[1:]
+	ca_cert := certs[1]
+
+	b.Logger().Trace(fmt.Sprintf("the chain contains %d certs", len(ca_chain)))
+
+	var ca_chain_pem []string
+	var ca_pem string
+
+	// Encode each certificate found in the PKCS#7 structure into PEM format.
+	for _, cert := range ca_chain {
+		pemBlock := &pem.Block{
+			Type:  "CERTIFICATE",
+			Bytes: cert.Raw,
+		}
+		pemEncoded := pem.EncodeToMemory(pemBlock)
+		ca_chain_pem = append(ca_chain_pem, string(pemEncoded))
+	}
+
+	pemBlock := &pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: ca_cert.Raw,
+	}
+	caPemEncoded := pem.EncodeToMemory(pemBlock)
+	ca_pem = string(caPemEncoded)
+
+	return ca_chain_pem, ca_pem, nil
 }
 
 // Generate keypair and CSR
@@ -248,73 +263,73 @@ func (b *keyfactorBackend) generateCSR(cn string, ip_sans []string, dns_sans []s
 	return csrBuf.String(), x509.MarshalPKCS1PrivateKey(keyBytes)
 }
 
-func fetchCertFromKeyfactor(ctx context.Context, req *logical.Request, b *keyfactorBackend, kfCertId string, includeChain bool) (string, error) {
-	config, err := b.fetchConfig(ctx, req.Storage)
-	if err != nil {
-		return "", err
-	}
-	if config == nil {
-		return "", errors.New("unable to load configuration")
-	}
+// func fetchCertFromKeyfactor(ctx context.Context, req *logical.Request, b *keyfactorBackend, kfCertId string, includeChain bool) (string, error) {
+// 	config, err := b.fetchConfig(ctx, req.Storage)
+// 	if err != nil {
+// 		return "", err
+// 	}
+// 	if config == nil {
+// 		return "", errors.New("unable to load configuration")
+// 	}
 
-	// get the client
-	client, err := b.getClient(ctx, req.Storage)
-	if err != nil {
-		b.Logger().Error("unable to create the http client")
-	}
-	// This is only needed when running as a vault extension
-	b.Logger().Debug("Closing idle connections")
-	client.httpClient.CloseIdleConnections()
+// 	// get the client
+// 	client, err := b.getClient(ctx, req.Storage)
+// 	if err != nil {
+// 		b.Logger().Error("unable to create the http client")
+// 	}
+// 	// This is only needed when running as a vault extension
+// 	b.Logger().Debug("Closing idle connections")
+// 	client.httpClient.CloseIdleConnections()
 
-	include := "false"
-	if includeChain {
-		include = "true"
-	}
+// 	include := "false"
+// 	if includeChain {
+// 		include = "true"
+// 	}
 
-	// Build request
-	url := config.KeyfactorUrl + "Certificates/Download"
-	b.Logger().Debug("url: " + url)
-	bodyContent := fmt.Sprintf(`{"CertID": %s, "IncludeChain": %s }`, kfCertId, include)
-	payload := strings.NewReader(bodyContent)
-	b.Logger().Debug("body: " + bodyContent)
-	httpReq, err := http.NewRequest("POST", url, payload)
-	if err != nil {
-		b.Logger().Info("Error forming request: {{err}}", err)
-	}
-	httpReq.Header.Add("x-keyfactor-requested-with", "APIClient")
-	httpReq.Header.Add("content-type", "application/json")
-	httpReq.Header.Add("x-certificateformat", "PEM")
+// 	// Build request
+// 	url := config.KeyfactorUrl + "Certificates/Download"
+// 	b.Logger().Debug("url: " + url)
+// 	bodyContent := fmt.Sprintf(`{"CertID": %s, "IncludeChain": %s, "ChainOrder": "endentityfirst" }`, kfCertId, include)
+// 	payload := strings.NewReader(bodyContent)
+// 	b.Logger().Debug("body: " + bodyContent)
+// 	httpReq, err := http.NewRequest("POST", url, payload)
+// 	if err != nil {
+// 		b.Logger().Info("Error forming request: {{err}}", err)
+// 	}
+// 	httpReq.Header.Add("x-keyfactor-requested-with", "APIClient")
+// 	httpReq.Header.Add("content-type", "application/json")
+// 	httpReq.Header.Add("x-certificateformat", "PEM")
 
-	// Send request and check status
-	b.Logger().Debug("About to connect to " + config.KeyfactorUrl + "for cert retrieval")
-	res, err := client.httpClient.Do(httpReq)
-	if err != nil {
-		b.Logger().Info("failed getting cert: {{err}}", err)
-		return "", err
-	}
-	if res.StatusCode != 200 {
-		b.Logger().Error("request failed: server returned" + fmt.Sprint(res.StatusCode))
-		b.Logger().Error("Error response = " + fmt.Sprint(res.Body))
-		return "", fmt.Errorf("error downloading certificate. returned status = %d\n ", res.StatusCode)
-	}
+// 	// Send request and check status
+// 	b.Logger().Debug("About to connect to " + config.KeyfactorUrl + "for cert retrieval")
+// 	res, err := client.httpClient.Do(httpReq)
+// 	if err != nil {
+// 		b.Logger().Info("failed getting cert: {{err}}", err)
+// 		return "", err
+// 	}
+// 	if res.StatusCode != 200 {
+// 		b.Logger().Error("request failed: server returned" + fmt.Sprint(res.StatusCode))
+// 		b.Logger().Error("Error response = " + fmt.Sprint(res.Body))
+// 		return "", fmt.Errorf("error downloading certificate. returned status = %d\n ", res.StatusCode)
+// 	}
 
-	// Read response and return certificate and key
-	defer res.Body.Close()
+// 	// Read response and return certificate and key
+// 	defer res.Body.Close()
 
-	body, err := io.ReadAll(res.Body)
-	if err != nil {
-		b.Logger().Info("Error reading response: {{err}}", err)
-		return "", err
-	}
+// 	body, err := io.ReadAll(res.Body)
+// 	if err != nil {
+// 		b.Logger().Info("Error reading response: {{err}}", err)
+// 		return "", err
+// 	}
 
-	// Parse response
-	var r KeyfactorCertDownloadResponse
-	json.Unmarshal(body, &r)
-	b.Logger().Debug("response = ", r)
+// 	// Parse response
+// 	var r KeyfactorCertDownloadResponse
+// 	json.Unmarshal(body, &r)
+// 	b.Logger().Debug("response = ", r)
 
-	return r.Content, nil
+// 	return r.Content, nil
 
-}
+// }
 
 // Allows fetching certificates from the backend; it handles the slightly
 // separate pathing for CA and revoked certificates.
@@ -402,6 +417,117 @@ func parseOtherSANs(others []string) (map[string][]string, error) {
 
 func normalizeSerial(serial string) string {
 	return strings.Replace(strings.ToLower(serial), ":", "-", -1)
+}
+
+func fetchCertIssuedByCA(ctx context.Context, req *logical.Request, b *keyfactorBackend, caName string) (KeyfactorCertResponse, error) {
+	// call certificates endpoint, limit results to 1, filter by CA name
+	config, err := b.fetchConfig(ctx, req.Storage)
+	if err != nil {
+		return nil, err
+	}
+	if config == nil {
+		return nil, errors.New("unable to load configuration")
+	}
+
+	// get the client
+	client, err := b.getClient(ctx, req.Storage)
+	if err != nil {
+		b.Logger().Error("unable to create the http client")
+	}
+	// This is only needed when running as a vault extension
+	b.Logger().Debug("Closing idle connections")
+	client.httpClient.CloseIdleConnections()
+
+	url := config.KeyfactorUrl + "/" + config.CommandAPIPath + "/Certificates?pq.queryString=CA%20-eq%20%22" + caName + "%22%20&ReturnLimit=1"
+	b.Logger().Debug("url: " + url)
+
+	httpReq, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		b.Logger().Info("Error forming request: {{err}}", err)
+	}
+	httpReq.Header.Add("x-keyfactor-requested-with", "APIClient")
+	httpReq.Header.Add("content-type", "application/json")
+
+	// Send request and check status
+	b.Logger().Debug("About to connect to " + config.KeyfactorUrl + "for cert retrieval")
+	res, err := client.httpClient.Do(httpReq)
+	if err != nil {
+		b.Logger().Info("failed getting cert: {{err}}", err)
+		return nil, err
+	}
+	if res.StatusCode != 200 {
+		b.Logger().Error("request failed: server returned" + fmt.Sprint(res.StatusCode))
+		b.Logger().Error("Error response = " + fmt.Sprint(res.Body))
+		return nil, fmt.Errorf("error downloading certificate. returned status = %d\n ", res.StatusCode)
+	}
+
+	// Read response and return certificate and key
+	defer res.Body.Close()
+
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		b.Logger().Info("Error reading response: {{err}}", err)
+		return nil, err
+	}
+
+	// Parse response
+	var r KeyfactorCertResponse
+	json.Unmarshal(body, &r)
+	b.Logger().Debug("response = ", r)
+
+	if len(r) == 0 {
+		return nil, fmt.Errorf("no certificates issued by CA %s found in Command.  At least 1 must exist in order to retreive the CA or CA chain certificate(s)", caName)
+	}
+
+	return r, nil
+}
+
+// ConvertBase64P7BtoCertificates takes a base64 encoded P7B certificate string and returns a slice of *x509.Certificate.
+func ConvertBase64P7BtoCertificates(base64P7B string) ([]*x509.Certificate, error) {
+	// Decode the base64 string to a byte slice.
+	decodedBytes, err := base64.StdEncoding.DecodeString(base64P7B)
+	if err != nil {
+		return nil, fmt.Errorf("error decoding base64 string: %w", err)
+	}
+
+	// Parse the PKCS#7 structure.
+	p7, err := pkcs7.Parse(decodedBytes)
+	if err != nil {
+		return nil, fmt.Errorf("error parsing PKCS#7 data: %w", err)
+	}
+
+	// Return the certificates.
+	return p7.Certificates, nil
+}
+
+func ConvertBase64P7BtoPEM(base64P7B string) ([]string, error) {
+	// Decode the base64 string to a byte slice.
+	decodedBytes, err := base64.StdEncoding.DecodeString(base64P7B)
+	if err != nil {
+		return []string{}, fmt.Errorf("error decoding base64 string: %w", err)
+	}
+
+	// Parse the PKCS#7 structure.
+	p7, err := pkcs7.Parse(decodedBytes)
+
+	if err != nil {
+		return []string{}, fmt.Errorf("error parsing PKCS#7 data: %w", err)
+	}
+
+	// Initialize an empty string to append the PEM encoded certificates.
+	var pemEncodedCerts []string
+
+	// Encode each certificate found in the PKCS#7 structure into PEM format.
+	for _, cert := range p7.Certificates {
+		pemBlock := &pem.Block{
+			Type:  "CERTIFICATE",
+			Bytes: cert.Raw,
+		}
+		pemEncoded := pem.EncodeToMemory(pemBlock)
+		pemEncodedCerts = append(pemEncodedCerts, string(pemEncoded))
+	}
+
+	return pemEncodedCerts, nil
 }
 
 type KeyfactorCertResponse []struct {
