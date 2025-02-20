@@ -1,3 +1,7 @@
+- 1.4.1
+  - Updated Keyfactor Client library to 1.2.0
+  - Now passing scopes and audience along with oAuth token request.
+  
 - 1.4.0
   - Updated CA and CA chain retreival to work for CA's hosted outside of Command (EJBCA)
   - Added support for oAuth2 authentication to Keyfactor Command.

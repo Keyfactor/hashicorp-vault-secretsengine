@@ -374,7 +374,7 @@ Here is a table of the available configuration paramaters
 | **token_url** | string | no[^3]  | | oAuth authentication: Endpoint for retreiving the authentication token |
 | **access_token** | string | no   | | oAuth access token, if retrieved outside the context of the plugin |
 | **scopes** | []string (comma separated list) | no | | the defined scopes to apply to the retreived token in the oAuth authorization flow.  If not provided, all available scopes for the service account will be assigned to the token upon authentication |
-| **audience** | []string (comma seperated list) | no | | the OpenID Connect v1.0 or oAuth v2.0 token audience |
+| **audience** | string | no | | the OpenID Connect v1.0 or oAuth v2.0 token audience |
 | **skip_verify** | bool | no | _false_ | set this to true to skip checking the CRL list of the HTTPS endpoint |
 | **command_cert_path** | string | no | | set this value to the local path of the CA cert if it is untrusted by the client and skip_verify is false
 
