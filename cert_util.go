@@ -116,7 +116,7 @@ func fetchCAInfo(ctx context.Context, req *logical.Request, b *keyfactorBackend,
 		b.Logger().Error("error storing the ca locally", err)
 	}
 
-	ca_chain_combined := strings.Join(ca_chain, "\n") // store as a single PEM chain
+	ca_chain_combined := strings.Join(ca_chain, "") // store as a single PEM chain
 
 	// store the full chain locally
 	caChainStorageEntry, err := logical.StorageEntryJSON("ca/"+caName+"_chain", ca_chain_combined)

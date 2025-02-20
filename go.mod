@@ -10,6 +10,7 @@ require (
 	github.com/hashicorp/go-hclog v1.5.0
 	github.com/hashicorp/vault/api v1.1.1
 	github.com/hashicorp/vault/sdk v0.2.1
+	go.mozilla.org/pkcs7 v0.9.0
 )
 
 require (
