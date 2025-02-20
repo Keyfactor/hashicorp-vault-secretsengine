@@ -11,6 +11,7 @@ package kfbackend
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/logical"
@@ -19,8 +20,14 @@ import (
 func pathCA(b *keyfactorBackend) []*framework.Path {
 	return []*framework.Path{
 		{ //fetch ca
-			Pattern: `ca(/pem)?`,
-
+			Pattern: `ca`,
+			Fields: map[string]*framework.FieldSchema{
+				"ca": {
+					Type:        framework.TypeString,
+					Description: pathCAFieldDesck,
+					Required:    false,
+				},
+			},
 			Callbacks: map[logical.Operation]framework.OperationFunc{
 				logical.ReadOperation: b.pathFetchCa,
 			},
@@ -29,10 +36,16 @@ func pathCA(b *keyfactorBackend) []*framework.Path {
 			HelpDescription: pathFetchCAHelpDesc,
 		},
 		{ // fetch ca chain
-			Pattern: `ca_chain(/pem)?`,
-
+			Pattern: `ca_chain`,
+			Fields: map[string]*framework.FieldSchema{
+				"ca": {
+					Type:        framework.TypeString,
+					Description: pathCAFieldDesck,
+					Required:    false,
+				},
+			},
 			Callbacks: map[logical.Operation]framework.OperationFunc{
-				logical.ReadOperation: b.pathFetchCa,
+				logical.ReadOperation: b.pathFetchCaChain,
 			},
 
 			HelpSynopsis:    pathFetchChainHelp,
@@ -42,32 +55,35 @@ func pathCA(b *keyfactorBackend) []*framework.Path {
 }
 
 func (b *keyfactorBackend) pathFetchCa(ctx context.Context, req *logical.Request, data *framework.FieldData) (response *logical.Response, retErr error) {
-	var serial string
-
-	response = &logical.Response{
-		Data: map[string]interface{}{},
-	}
-
-	// Some of these need to return raw and some non-raw;
-	// this is basically handled by setting contentType or not.
-	// Errors don't cause an immediate exit, because the raw
-	// paths still need to return raw output.
 	b.Logger().Debug("fetching ca, path = " + req.Path)
+	b.Logger().Trace("reading CA name...")
 
-	switch {
-	case req.Path == "ca" || req.Path == "ca/pem":
-		serial = "ca"
-	case req.Path == "ca_chain" || req.Path == "cert/ca_chain":
-		serial = "ca_chain"
-	default:
-		serial = "ca"
+	caName := data.Get("ca").(string)
+	if caName == "" {
+		b.Logger().Debug("no ca passed, retreiving from config")
+		caName = b.cachedConfig.CertAuthority
+	}
+	b.Logger().Debug(fmt.Sprintf("ca name = %s", caName))
+	if caName == "" {
+		return nil, fmt.Errorf("the CA name needs to be specified in the configuration, or passed along with the request")
 	}
 
-	if serial == "ca" {
-		return fetchCAInfo(ctx, req, b)
-	}
+	return fetchCAInfo(ctx, req, b, caName, false)
+}
 
-	return fetchCaChainInfo(ctx, req, b)
+func (b *keyfactorBackend) pathFetchCaChain(ctx context.Context, req *logical.Request, data *framework.FieldData) (response *logical.Response, retErr error) {
+	b.Logger().Debug("fetching ca chain, path = " + req.Path)
+	b.Logger().Trace("reading CA name...")
+	caName := data.Get("ca").(string)
+	if caName == "" {
+		b.Logger().Debug("no ca passed, retreiving from config")
+		caName = b.cachedConfig.CertAuthority
+	}
+	b.Logger().Debug(fmt.Sprintf("ca name = %s", caName))
+	if caName == "" {
+		return nil, fmt.Errorf("the CA name needs to be specified in the configuration, or passed along with the request")
+	}
+	return fetchCAInfo(ctx, req, b, caName, true)
 }
 
 const pathFetchCAHelp = `
@@ -78,11 +94,13 @@ const pathFetchChainHelp = `
 Fetch a CA Chain.
 `
 const pathFetchCAHelpDesc = `
-This allows Certificate Authorities to be fetched.
-The "ca" command fetches the appropriate information in DER encoding. Add "/pem" to either to get PEM encoding.
+This allows the Certificate Authority certificate to be fetched.
+The "ca" command fetches the PEM encoded CA certificate.  The CA will have to be defined in the configuration or passed along with the request.
 `
 
 const pathFetchChainHelpDesc = `
-This allows the Certificate Authority chain to be fetched.
-The "ca_chain" command fetches the certificate authority trust chain in PEM encoding.
+This allows the Certificate Authority chain certificates to be fetched.
+The "ca_chain" command fetches the PEM encoded CA certificate chain.  The CA will have to be defined in the configuration or passed along with the request.
 `
+
+const pathCAFieldDesck = `The logical CA Name as defined in Command.  If not provided, we will attempt to use the CA Name stored in the configuration.`

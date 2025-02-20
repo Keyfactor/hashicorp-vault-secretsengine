@@ -88,6 +88,8 @@ func newClient(config *keyfactorConfig, b *keyfactorBackend) (*keyfactorClient, 
 			WithClientSecret(config.ClientSecret).
 			WithTokenUrl(config.TokenUrl).
 			WithAccessToken(config.AccessToken).
+			WithScopes(config.Scopes).
+			WithAudience(config.Audience).
 			Authenticate()
 
 		if oErr != nil {

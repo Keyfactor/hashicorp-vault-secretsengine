@@ -98,7 +98,7 @@ func pathCerts(b *keyfactorBackend) []*framework.Path {
 			Fields: map[string]*framework.FieldSchema{
 				"serial": {
 					Type:        framework.TypeString,
-					Description: `The cerial number of the certificate to revoke`,
+					Description: `The serial number of the certificate to revoke`,
 				},
 			},
 			Callbacks: map[logical.Operation]framework.OperationFunc{
