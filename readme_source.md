@@ -308,11 +308,13 @@ any of the paths below, use the help command with any route matching
 the path pattern. Note that depending on the policy of your auth token,
 you may or may not be able to access certain paths.
 
-    ^ca(/pem)?$
+    ^ca
         Fetch a CA, CRL, CA Chain, or non-revoked certificate.
+        pass "ca=<ca name>" to retrieve them for a CA other than the one set in the configuration.
 
-    ^ca_chain(/pem)?$
+    ^ca_chain
         Fetch a CA, CRL, CA Chain, or non-revoked certificate.
+        pass "ca=<ca name>" to retrieve them for a CA other than the one set in the configuration.
 
     ^certs/?$
         Use with the "list" command to display the list of certificate serial numbers for certificates managed by this secrets engine.
@@ -593,8 +595,8 @@ instance of the plugin is named "keyfactor".
 
 ### Read CA cert
 
-`vault read keyfactor/ca`
+`vault read keyfactor/ca ca=<ca name>`
 
 ### Read CA chain
 
-`vault read keyfactor/ca_chain`
+`vault read keyfactor/ca_chain ca=<ca name>`
