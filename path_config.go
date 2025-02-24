@@ -42,6 +42,9 @@ type keyfactorConfig struct {
 
 func (b *keyfactorBackend) fetchConfig(ctx context.Context, s logical.Storage) (*keyfactorConfig, error) {
 	if b.cachedConfig != nil {
+		if b.cachedConfig.CommandAPIPath == "" {
+			b.cachedConfig.CommandAPIPath = "KeyfactorAPI"
+		}
 		return b.cachedConfig, nil
 	}
 
