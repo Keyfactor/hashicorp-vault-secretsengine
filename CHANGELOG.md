@@ -2,6 +2,7 @@
   - Updated CA and CA chain retreival to work for CA's hosted outside of Command (EJBCA)
   - Updated Keyfactor Client library to 1.2.0
   - Now passing scopes and audience along with oAuth token request.
+  - including dns_sans, ip_sans and metadata along with pre-generated csr sign requests
   
 - 1.4.0
   - Added support for oAuth2 authentication to Keyfactor Command.
