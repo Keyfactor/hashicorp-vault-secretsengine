@@ -332,11 +332,13 @@ any of the paths below, use the help command with any route matching
 the path pattern. Note that depending on the policy of your auth token,
 you may or may not be able to access certain paths.
 
-    ^ca(/pem)?$
+    ^ca
         Fetch a CA, CRL, CA Chain, or non-revoked certificate.
+        pass "ca=<ca name>" to retrieve them for a CA other than the one set in the configuration.
 
-    ^ca_chain(/pem)?$
+    ^ca_chain
         Fetch a CA, CRL, CA Chain, or non-revoked certificate.
+        pass "ca=<ca name>" to retrieve them for a CA other than the one set in the configuration.
 
     ^certs/?$
         Use with the "list" command to display the list of certificate serial numbers for certificates managed by this secrets engine.
@@ -396,7 +398,7 @@ Here is a table of the available configuration paramaters
 | **token_url** | string | no[^3]  | | oAuth authentication: Endpoint for retreiving the authentication token |
 | **access_token** | string | no   | | oAuth access token, if retrieved outside the context of the plugin |
 | **scopes** | []string (comma separated list) | no | | the defined scopes to apply to the retreived token in the oAuth authorization flow.  If not provided, all available scopes for the service account will be assigned to the token upon authentication |
-| **audience** | []string (comma seperated list) | no | | the OpenID Connect v1.0 or oAuth v2.0 token audience |
+| **audience** | string | no | | the OpenID Connect v1.0 or oAuth v2.0 token audience |
 | **skip_verify** | bool | no | _false_ | set this to true to skip checking the CRL list of the HTTPS endpoint |
 | **command_cert_path** | string | no | | set this value to the local path of the CA cert if it is untrusted by the client and skip_verify is false
 
@@ -617,10 +619,10 @@ instance of the plugin is named "keyfactor".
 
 ### Read CA cert
 
-`vault read keyfactor/ca`
+`vault read keyfactor/ca ca=<ca name>`
 
 ### Read CA chain
 
-`vault read keyfactor/ca_chain`
+`vault read keyfactor/ca_chain ca=<ca name>`
 
 

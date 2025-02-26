@@ -313,6 +313,29 @@ func (b *keyfactorBackend) pathRoleCreate(ctx context.Context, req *logical.Requ
 	return nil, nil
 }
 
+func parseOtherSANs(others []string) (map[string][]string, error) {
+	result := map[string][]string{}
+	for _, other := range others {
+		splitOther := strings.SplitN(other, ";", 2)
+		if len(splitOther) != 2 {
+			return nil, fmt.Errorf("expected a semicolon in other SAN %q", other)
+		}
+		splitType := strings.SplitN(splitOther[1], ":", 2)
+		if len(splitType) != 2 {
+			return nil, fmt.Errorf("expected a colon in other SAN %q", other)
+		}
+		switch {
+		case strings.EqualFold(splitType[0], "utf8"):
+		case strings.EqualFold(splitType[0], "utf-8"):
+		default:
+			return nil, fmt.Errorf("only utf8 other SANs are supported; found non-supported type in other SAN %q", other)
+		}
+		result[splitOther[0]] = append(result[splitOther[0]], splitType[1])
+	}
+
+	return result, nil
+}
+
 type roleEntry struct {
 	LeaseMax                      string        `json:"lease_max"`
 	Lease                         string        `json:"lease"`
