@@ -179,9 +179,6 @@ func (b *keyfactorBackend) submitCSR(ctx context.Context, req *logical.Request, 
 
 	b.Logger().Debug("parsed response: ", certI...)
 
-	if err != nil {
-		b.Logger().Error("unable to parse ca_chain response", fmt.Sprint(err))
-	}
 	caEntry, err := logical.StorageEntryJSON("ca_chain/", certs[1:])
 	if err != nil {
 		b.Logger().Error("error creating ca_chain entry", err)

@@ -293,9 +293,9 @@ func (b *keyfactorBackend) pathSign(ctx context.Context, req *logical.Request, d
 
 	b.Logger().Debug("parsing ip_sans...")
 	ip_sans_string, ok := data.GetOk("ip_sans")
-	b.Logger().Trace(fmt.Sprintf("passed ip_sans: %s", ip_sans_string.(string)))
 
 	if ok && ip_sans_string != nil && ip_sans_string.(string) != "" {
+		b.Logger().Trace(fmt.Sprintf("passed ip_sans: %s", ip_sans_string.(string)))
 		ip_sans = strings.Split(ip_sans_string.(string), ",")
 	}
 
