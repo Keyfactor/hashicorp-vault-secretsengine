@@ -408,19 +408,21 @@ func fetchCertIssuedByCA(ctx context.Context, req *logical.Request, b *keyfactor
 	// This is only needed when running as a vault extension
 	b.Logger().Debug("Closing idle connections")
 	client.httpClient.CloseIdleConnections()
+	caName = strings.Replace(caName, " ", "%20", -1)
+	reqUrl := config.KeyfactorUrl + "/" + config.CommandAPIPath + "/Certificates?pq.queryString=CA%20-eq%20%22" + caName + "%20%22&ReturnLimit=1"
 
-	url := config.KeyfactorUrl + "/" + config.CommandAPIPath + "/Certificates?pq.queryString=CA%20-eq%20%22" + caName + "%22%20&ReturnLimit=1"
-	b.Logger().Debug("url: " + url)
+	b.Logger().Debug("url: " + reqUrl)
 
-	httpReq, err := http.NewRequest("GET", url, nil)
+	httpReq, err := http.NewRequest("GET", reqUrl, nil)
 	if err != nil {
 		b.Logger().Info("Error forming request: {{err}}", err)
 	}
+
 	httpReq.Header.Add("x-keyfactor-requested-with", "APIClient")
 	httpReq.Header.Add("content-type", "application/json")
 
 	// Send request and check status
-	b.Logger().Debug("About to connect to " + config.KeyfactorUrl + "for cert retrieval")
+	b.Logger().Debug("About to connect to " + reqUrl + "for cert retrieval")
 	res, err := client.httpClient.Do(httpReq)
 	if err != nil {
 		b.Logger().Info("failed getting cert: {{err}}", err)
@@ -472,12 +474,12 @@ func fetchChainAndCAForCert(ctx context.Context, req *logical.Request, b *keyfac
 	client.httpClient.CloseIdleConnections()
 
 	// Build request
-	url := config.KeyfactorUrl + "/" + config.CommandAPIPath + "/Certificates/Download"
-	b.Logger().Debug("url: " + url)
+	reqUrl := config.KeyfactorUrl + "/" + config.CommandAPIPath + "/Certificates/Download"
+	b.Logger().Debug("url: " + reqUrl)
 	bodyContent := fmt.Sprintf(`{"CertID": %d, "IncludeChain": true, "ChainOrder": "endentityfirst" }`, kfCertId)
 	payload := strings.NewReader(bodyContent)
 	b.Logger().Debug("body: " + bodyContent)
-	httpReq, err := http.NewRequest("POST", url, payload)
+	httpReq, err := http.NewRequest("POST", reqUrl, payload)
 	if err != nil {
 		b.Logger().Info("Error forming request: %s", err)
 	}
@@ -489,7 +491,7 @@ func fetchChainAndCAForCert(ctx context.Context, req *logical.Request, b *keyfac
 	b.Logger().Debug("About to connect to " + config.KeyfactorUrl + "for cert retrieval")
 	res, err := client.httpClient.Do(httpReq)
 	if err != nil {
-		b.Logger().Info("failed getting cert: %s", err)
+		b.Logger().Info(fmt.Sprintf("failed getting cert: %s", err))
 		return nil, "", err
 	}
 	if res.StatusCode != 200 {
