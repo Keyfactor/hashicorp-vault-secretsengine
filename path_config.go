@@ -34,7 +34,7 @@ type keyfactorConfig struct {
 	AccessToken     string   `json:"access_token"`
 	SkipTLSVerify   bool     `json:"skip_verify"`
 	Scopes          []string `json:"scopes"`
-	Audience        []string `json:"audience"`
+	Audience        string   `json:"audience"`
 	CertTemplate    string   `json:"template"`
 	CertAuthority   string   `json:"ca"`
 	CommandCertPath string   `json:"command_cert_path"`
@@ -42,6 +42,9 @@ type keyfactorConfig struct {
 
 func (b *keyfactorBackend) fetchConfig(ctx context.Context, s logical.Storage) (*keyfactorConfig, error) {
 	if b.cachedConfig != nil {
+		if b.cachedConfig.CommandAPIPath == "" {
+			b.cachedConfig.CommandAPIPath = "KeyfactorAPI"
+		}
 		return b.cachedConfig, nil
 	}
 
@@ -115,7 +118,7 @@ func pathConfig(b *keyfactorBackend) []*framework.Path {
 					Required: false,
 				},
 				"audience": {
-					Type: framework.TypeCommaStringSlice,
+					Type: framework.TypeString,
 					Description: "The audience for authenticating with Keyfactor Command using `OAuth2` client" +
 						" credentials.",
 					Required: false,
@@ -252,7 +255,7 @@ func (b *keyfactorBackend) pathConfigUpdate(
 		TokenUrl:        data.Get("token_url").(string),
 		AccessToken:     data.Get("access_token").(string),
 		Scopes:          data.Get("scopes").([]string),
-		Audience:        data.Get("audience").([]string),
+		Audience:        data.Get("audience").(string),
 		Domain:          data.Get("domain").(string),
 		CommandCertPath: data.Get("command_cert_path").(string),
 		SkipTLSVerify:   data.Get("skip_verify").(bool),
@@ -315,7 +318,7 @@ func (b *keyfactorBackend) pathConfigUpdate(
 	}
 
 	if audience, ok := data.GetOk("audience"); ok {
-		existingConfig.Audience = audience.([]string)
+		existingConfig.Audience = audience.(string)
 	}
 
 	if domain, ok := data.GetOk("domain"); ok {
