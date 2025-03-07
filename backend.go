@@ -11,16 +11,11 @@ package kfbackend
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"strings"
 	"sync"
-	"time"
 
-	"github.com/hashicorp/errwrap"
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/logical"
 )
@@ -110,6 +105,8 @@ func (b *keyfactorBackend) getClient(ctx context.Context, s logical.Storage) (*k
 	defer b.configLock.RUnlock()
 
 	if b.client != nil {
+		b.Logger().Debug("closing idle connections before returning existing client")
+		b.client.httpClient.CloseIdleConnections()
 		return b.client, nil
 	}
 
@@ -129,141 +126,6 @@ func (b *keyfactorBackend) getClient(ctx context.Context, s logical.Storage) (*k
 	return b.client, nil
 }
 
-// Handle interface with Keyfactor API to enroll a certificate with given content
-func (b *keyfactorBackend) submitCSR(ctx context.Context, req *logical.Request, csr string, caName string, templateName string, metaDataJson string) ([]string, string, error) {
-	config, err := b.fetchConfig(ctx, req.Storage)
-	if err != nil {
-		return nil, "", err
-	}
-	if config == nil {
-		return nil, "", errors.New("configuration is empty")
-	}
-
-	location, _ := time.LoadLocation("UTC")
-	t := time.Now().In(location)
-	time := t.Format("2006-01-02T15:04:05")
-
-	// get client
-	client, err := b.getClient(ctx, req.Storage)
-	if err != nil {
-		return nil, "", fmt.Errorf("error getting client: %w", err)
-	}
-
-	b.Logger().Debug("Closing idle connections")
-	client.httpClient.CloseIdleConnections()
-
-	// build request parameter structure
-
-	url := config.KeyfactorUrl + "/" + config.CommandAPIPath + "/Enrollment/CSR"
-	b.Logger().Debug("url: " + url)
-	bodyContent := "{\"CSR\": \"" + csr + "\",\"CertificateAuthority\":\"" + caName + "\",\"IncludeChain\": true, \"Metadata\": " + metaDataJson + ", \"Timestamp\": \"" + time + "\",\"Template\": \"" + templateName + "\",\"SANs\": {}}"
-	payload := strings.NewReader(bodyContent)
-	b.Logger().Debug("body: " + bodyContent)
-	httpReq, err := http.NewRequest("POST", url, payload)
-
-	if err != nil {
-		b.Logger().Info("Error forming request: {{err}}", err)
-	}
-
-	httpReq.Header.Add("x-keyfactor-requested-with", "APIClient")
-	httpReq.Header.Add("content-type", "application/json")
-	httpReq.Header.Add("x-certificateformat", "PEM")
-
-	// Send request and check status
-
-	b.Logger().Debug("About to connect to " + config.KeyfactorUrl + "for csr submission")
-	res, err := client.httpClient.Do(httpReq)
-	if err != nil {
-		b.Logger().Info("CSR Enrollment failed: {{err}}", err.Error())
-		return nil, "", err
-	}
-	if res.StatusCode != 200 {
-		b.Logger().Error("CSR Enrollment failed: server returned" + fmt.Sprint(res.StatusCode))
-		defer res.Body.Close()
-		body, _ := io.ReadAll(res.Body)
-		b.Logger().Error("Error response: " + string(body[:]))
-		return nil, "", fmt.Errorf("CSR Enrollment request failed with status code %d and error: "+string(body[:]), res.StatusCode)
-	}
-
-	// Read response and return certificate and key
-
-	defer res.Body.Close()
-	body, err := io.ReadAll(res.Body)
-	if err != nil {
-		b.Logger().Error("Error reading response: {{err}}", err)
-		return nil, "", err
-	}
-
-	// Parse response
-	var r map[string]interface{}
-	json.Unmarshal(body, &r)
-	b.Logger().Debug("response = ", r)
-
-	inner := r["CertificateInformation"].(map[string]interface{})
-	certI := inner["Certificates"].([]interface{})
-	certs := make([]string, len(certI))
-	for i, v := range certI {
-		certs[i] = v.(string)
-		start := strings.Index(certs[i], "-----BEGIN CERTIFICATE-----")
-		certs[i] = certs[i][start:]
-	}
-	serial := inner["SerialNumber"].(string)
-	kfId := inner["KeyfactorID"].(float64)
-
-	b.Logger().Debug("parsed response: ", certI...)
-
-	if err != nil {
-		b.Logger().Error("unable to parse ca_chain response", fmt.Sprint(err))
-	}
-	caEntry, err := logical.StorageEntryJSON("ca_chain/", certs[1:])
-	if err != nil {
-		b.Logger().Error("error creating ca_chain entry", err)
-	}
-
-	err = req.Storage.Put(ctx, caEntry)
-	if err != nil {
-		b.Logger().Error("error storing the ca_chain locally", err)
-	}
-
-	key := "certs/" + normalizeSerial(serial)
-
-	entry := &logical.StorageEntry{
-		Key:   key,
-		Value: []byte(certs[0]),
-	}
-
-	b.Logger().Debug("cert entry.Value = ", string(entry.Value))
-
-	err = req.Storage.Put(ctx, entry)
-	if err != nil {
-		return nil, "", errwrap.Wrapf("unable to store certificate locally: {{err}}", err)
-	}
-
-	kfIdEntry, err := logical.StorageEntryJSON("kfId/"+normalizeSerial(serial), kfId)
-	if err != nil {
-		return nil, "", err
-	}
-
-	err = req.Storage.Put(ctx, kfIdEntry)
-	if err != nil {
-		return nil, "", errwrap.Wrapf("unable to store the keyfactor ID for the certificate locally: {{err}}", err)
-	}
-
-	return certs, serial, nil
-}
-
 const keyfactorHelp = `
 The Keyfactor backend is a pki service that issues and manages certificates.
 `
-
-func (b *keyfactorBackend) isValidJSON(str string) bool {
-	var js json.RawMessage
-	err := json.Unmarshal([]byte(str), &js)
-	if err != nil {
-		b.Logger().Debug(err.Error())
-		return false
-	} else {
-		b.Logger().Debug("the metadata was able to be parsed as valid JSON")
-		return true
-	}
-}
