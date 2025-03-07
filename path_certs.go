@@ -266,37 +266,38 @@ func (b *keyfactorBackend) pathSign(ctx context.Context, req *logical.Request, d
 	arg, _ := json.Marshal(req.Data)
 	b.Logger().Debug(string(arg))
 
-	// validate DNS SANS (required)
+	// validate DNS SANS (optional)
 	var dns_sans []string
 	b.Logger().Debug("parsing dns_sans...")
 	dns_sans_string, ok := data.GetOk("dns_sans")
 
-	if !ok || dns_sans_string == nil || dns_sans_string == "" {
-		return nil, fmt.Errorf("dns_sans must be provided to issue certificate")
-	}
-	dns_sans_string = dns_sans_string.(string)
-	dns_sans = strings.Split(dns_sans_string.(string), ",")
+	if ok && dns_sans_string != nil && dns_sans_string == "" {
+		dns_sans_string = dns_sans_string.(string)
+		dns_sans = strings.Split(dns_sans_string.(string), ",")
+		b.Logger().Debug(fmt.Sprintf("dns_sans = %s", dns_sans))
 
-	b.Logger().Debug(fmt.Sprintf("dns_sans = %s", dns_sans))
+		b.Logger().Trace("checking to make sure all DNS SANs are allowed by role..")
 
-	b.Logger().Trace("checking to make sure all DNS SANs are allowed by role..")
-
-	// check the provided DNS sans against allowed domains
-	valid, err_resp = checkAllowedDomains(role, roleName, dns_sans)
-	if err_resp != nil && !valid {
-		b.Logger().Error(err_resp.Error())
-		return logical.ErrorResponse("DNS_SAN(s) not allowed for role: %s", err_resp.Error()), err_resp
+		// check the provided DNS sans against allowed domains
+		valid, err_resp = checkAllowedDomains(role, roleName, dns_sans)
+		if err_resp != nil && !valid {
+			b.Logger().Error(err_resp.Error())
+			return logical.ErrorResponse("DNS_SAN(s) not allowed for role: %s", err_resp.Error()), err_resp
+		}
+	} else {
+		b.Logger().Debug("no DNS SANs provided")
 	}
 
 	// ip sans (optional)
 	var ip_sans []string
-
 	b.Logger().Debug("parsing ip_sans...")
 	ip_sans_string, ok := data.GetOk("ip_sans")
 
 	if ok && ip_sans_string != nil && ip_sans_string.(string) != "" {
 		b.Logger().Trace(fmt.Sprintf("passed ip_sans: %s", ip_sans_string.(string)))
 		ip_sans = strings.Split(ip_sans_string.(string), ",")
+	} else {
+		b.Logger().Debug("no IP SANs provided")
 	}
 
 	// get the CA name
