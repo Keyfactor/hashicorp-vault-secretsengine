@@ -11,7 +11,7 @@ on:
 
 jobs:
   call-starter-workflow:
-    uses: keyfactor/actions/.github/workflows/starter.yml@v2
+    uses: keyfactor/actions/.github/workflows/starter.yml@v3
     secrets:
       token: ${{ secrets.V2BUILDTOKEN}}
       APPROVE_README_PUSH: ${{ secrets.APPROVE_README_PUSH}}
