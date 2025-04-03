@@ -16,7 +16,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -98,7 +97,7 @@ func pathCerts(b *keyfactorBackend) []*framework.Path {
 			Fields: map[string]*framework.FieldSchema{
 				"serial": {
 					Type:        framework.TypeString,
-					Description: `The cerial number of the certificate to revoke`,
+					Description: `The serial number of the certificate to revoke`,
 				},
 			},
 			Callbacks: map[logical.Operation]framework.OperationFunc{
@@ -239,7 +238,7 @@ func (b *keyfactorBackend) pathIssue(ctx context.Context, req *logical.Request, 
 		return logical.ErrorResponse("role key type \"any\" not allowed for issuing certificates, only signing"), nil
 	}
 
-	return b.pathIssueSignCert(ctx, req, data, role)
+	return b.pathIssueSignCert(ctx, req, data, role, roleName)
 }
 
 // pathSign issues a certificate from a submitted CSR, subject to role
@@ -247,6 +246,7 @@ func (b *keyfactorBackend) pathIssue(ctx context.Context, req *logical.Request, 
 func (b *keyfactorBackend) pathSign(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 	roleName := data.Get("role").(string)
 	csr := data.Get("csr").(string)
+
 	// Get the role
 	role, err := b.getRole(ctx, req.Storage, roleName)
 	if err != nil {
@@ -256,11 +256,75 @@ func (b *keyfactorBackend) pathSign(ctx context.Context, req *logical.Request, d
 		return logical.ErrorResponse(fmt.Sprintf("unknown role: %s", roleName)), nil
 	}
 
-	caName := data.Get("ca").(string)
-	templateName := data.Get("template").(string)
+	if !role.NoStore && b.System().ReplicationState().HasState(consts.ReplicationPerformanceStandby) {
+		return nil, logical.ErrReadOnly
+	}
 
-	b.Logger().Debug("CA Name parameter = " + caName)
-	b.Logger().Debug("Template name parameter = " + templateName)
+	var err_resp error
+	var valid bool
+
+	arg, _ := json.Marshal(req.Data)
+	b.Logger().Debug(string(arg))
+
+	// validate DNS SANS (optional)
+	var dns_sans []string
+	b.Logger().Debug("parsing dns_sans...")
+	dns_sans_string, ok := data.GetOk("dns_sans")
+
+	if ok && dns_sans_string != nil && dns_sans_string == "" {
+		dns_sans_string = dns_sans_string.(string)
+		dns_sans = strings.Split(dns_sans_string.(string), ",")
+		b.Logger().Debug(fmt.Sprintf("dns_sans = %s", dns_sans))
+
+		b.Logger().Trace("checking to make sure all DNS SANs are allowed by role..")
+
+		// check the provided DNS sans against allowed domains
+		valid, err_resp = checkAllowedDomains(role, roleName, dns_sans)
+		if err_resp != nil && !valid {
+			b.Logger().Error(err_resp.Error())
+			return logical.ErrorResponse("DNS_SAN(s) not allowed for role: %s", err_resp.Error()), err_resp
+		}
+	} else {
+		b.Logger().Debug("no DNS SANs provided")
+	}
+
+	// ip sans (optional)
+	var ip_sans []string
+	b.Logger().Debug("parsing ip_sans...")
+	ip_sans_string, ok := data.GetOk("ip_sans")
+
+	if ok && ip_sans_string != nil && ip_sans_string.(string) != "" {
+		b.Logger().Trace(fmt.Sprintf("passed ip_sans: %s", ip_sans_string.(string)))
+		ip_sans = strings.Split(ip_sans_string.(string), ",")
+	} else {
+		b.Logger().Debug("no IP SANs provided")
+	}
+
+	// get the CA name
+	b.Logger().Debug("parsing ca...")
+	caName := data.Get("ca").(string)
+	if caName == "" {
+		b.Logger().Debug("no ca passed, retreiving from config")
+		caName = b.cachedConfig.CertAuthority
+	}
+	if caName == "" {
+		return logical.ErrorResponse("no certificate authority was provided and there is no configuration entry for ca"), fmt.Errorf("CA name is required")
+	}
+	b.Logger().Debug(fmt.Sprintf("ca name = %s", caName))
+
+	// get the template name
+	b.Logger().Debug("parsing template name...")
+	templateName := data.Get("template").(string)
+	if templateName == "" {
+		b.Logger().Debug("no template name in parameters, retrieving from config")
+		templateName = b.cachedConfig.CertTemplate
+		if templateName == "" {
+			return logical.ErrorResponse("no certificate template name was provided and there is no configuration entry for 'template'"), fmt.Errorf("template name is required")
+		}
+	}
+	b.Logger().Debug(fmt.Sprintf("template name: %s", templateName))
+
+	//check role permissions
 
 	metadata := data.Get("metadata").(string)
 
@@ -271,12 +335,15 @@ func (b *keyfactorBackend) pathSign(ctx context.Context, req *logical.Request, d
 	// verify that any passed metadata string is valid JSON
 
 	if !b.isValidJSON(metadata) {
-		err := fmt.Errorf("'%s' is not a valid JSON string", metadata)
-		b.Logger().Error(err.Error())
-		return nil, err
+		err_resp := fmt.Errorf("'%s' is not a valid JSON string", metadata)
+		b.Logger().Error(err_resp.Error())
 	}
 
-	certs, serial, errr := b.submitCSR(ctx, req, csr, caName, templateName, metadata)
+	if err_resp != nil {
+		return nil, err_resp
+	}
+
+	certs, serial, errr := b.submitCSR(ctx, req, csr, caName, templateName, dns_sans, ip_sans, metadata)
 
 	if errr != nil {
 		return nil, fmt.Errorf("could not sign csr: %s", errr)
@@ -292,7 +359,7 @@ func (b *keyfactorBackend) pathSign(ctx context.Context, req *logical.Request, d
 	return response, nil
 }
 
-func (b *keyfactorBackend) pathIssueSignCert(ctx context.Context, req *logical.Request, data *framework.FieldData, role *roleEntry) (*logical.Response, error) {
+func (b *keyfactorBackend) pathIssueSignCert(ctx context.Context, req *logical.Request, data *framework.FieldData, role *roleEntry, roleName string) (*logical.Response, error) {
 	// If storing the certificate and on a performance standby, forward this request on to the primary
 	if !role.NoStore && b.System().ReplicationState().HasState(consts.ReplicationPerformanceStandby) {
 		return nil, logical.ErrReadOnly
@@ -300,52 +367,73 @@ func (b *keyfactorBackend) pathIssueSignCert(ctx context.Context, req *logical.R
 
 	var ip_sans []string
 	var dns_sans []string
+	var err_resp error
+	var valid bool
 
 	arg, _ := json.Marshal(req.Data)
 	b.Logger().Debug(string(arg))
 
-	// get common name
+	// validate Common Name (required)
 	b.Logger().Debug("parsing common_name...")
 	cn, ok := data.GetOk("common_name")
 
-	if !ok {
+	if !ok || cn == nil || cn.(string) == "" {
 		return nil, fmt.Errorf("common_name must be provided to issue certificate")
 	}
-
 	cn = cn.(string)
-
-	if cn == "" {
-		return nil, fmt.Errorf("common_name must be provided to issue certificate")
-	}
 
 	b.Logger().Debug(fmt.Sprintf("common_name = %s", cn))
 
-	// get dns sans (required)
+	// check to make sure common name is allowed by role
+	b.Logger().Trace("checking common name" + cn.(string))
+	valid, err_resp = checkAllowedDomains(role, roleName, []string{cn.(string)})
+
+	if err_resp != nil && !valid {
+		b.Logger().Error(err_resp.Error())
+		return logical.ErrorResponse("disallowed common name was provided: %s", err_resp.Error()), err_resp
+	}
+
+	// validate DNS SANS (required)
 	b.Logger().Debug("parsing dns_sans...")
 	dns_sans_string, ok := data.GetOk("dns_sans")
 
-	if !ok {
+	if !ok || dns_sans_string == nil || dns_sans_string == "" {
 		return nil, fmt.Errorf("dns_sans must be provided to issue certificate")
 	}
-
 	dns_sans_string = dns_sans_string.(string)
-
-	if dns_sans_string == "" {
-		return nil, fmt.Errorf("dns_sans must be provided to issue certificate")
-	}
-
 	dns_sans = strings.Split(dns_sans_string.(string), ",")
-
-	if len(dns_sans) == 0 {
-		return nil, fmt.Errorf("dns_sans must be provided to issue certificate")
-	}
 
 	b.Logger().Debug(fmt.Sprintf("dns_sans = %s", dns_sans))
 
-	// get ip sans (optional)
+	cnMatch := false
+
+	// make sure at least one DNS SAN matches the common name
+	for u := range dns_sans {
+		if cnMatch {
+			break
+		} // no need to check the rest if there was a match.
+		cnMatch = dns_sans[u] == cn.(string)
+	}
+
+	if !cnMatch {
+		err_resp = fmt.Errorf("at least one DNS SAN is required to match the supplied Common Name for RFC 2818 compliance")
+		b.Logger().Error(err_resp.Error())
+		return logical.ErrorResponse(err_resp.Error()), err_resp
+	}
+
+	b.Logger().Trace("checking to make sure all DNS SANs are allowed by role..")
+
+	// check the provided DNS sans against allowed domains
+	valid, err_resp = checkAllowedDomains(role, roleName, dns_sans)
+	if err_resp != nil && !valid {
+		b.Logger().Error(err_resp.Error())
+		return logical.ErrorResponse("DNS_SAN(s) not allowed for role: %s", err_resp.Error()), err_resp
+	}
+
+	// ip sans (optional)
 	b.Logger().Debug("parsing ip_sans...")
 	ip_sans_string, ok := data.GetOk("ip_sans")
-	if ok && ip_sans_string != "" {
+	if ok && ip_sans_string != nil && ip_sans_string.(string) != "" {
 		ip_sans = strings.Split(ip_sans_string.(string), ",")
 	}
 
@@ -355,6 +443,9 @@ func (b *keyfactorBackend) pathIssueSignCert(ctx context.Context, req *logical.R
 	if caName == "" {
 		b.Logger().Debug("no ca passed, retreiving from config")
 		caName = b.cachedConfig.CertAuthority
+	}
+	if caName == "" {
+		return logical.ErrorResponse("no certificate authority was provided and there is no configuration entry for ca"), fmt.Errorf("CA name is required")
 	}
 	b.Logger().Debug(fmt.Sprintf("ca name = %s", caName))
 
@@ -368,62 +459,6 @@ func (b *keyfactorBackend) pathIssueSignCert(ctx context.Context, req *logical.R
 	b.Logger().Debug(fmt.Sprintf("template name: %s", templateName))
 
 	//check role permissions
-	var err_resp error
-	var valid bool
-	var hasSuffix bool
-
-	// check the allowed domains for a match.
-	// if allowed_domains is '*', allow any domain
-
-	for _, v := range role.AllowedDomains {
-		if v == "*" || strings.HasSuffix(cn.(string), v) { // if it has the suffix..
-			hasSuffix = true
-			if cn.(string) == v || role.AllowSubdomains { // and there is an exact match, or subdomains are allowed..
-				valid = true // then it is valid
-			}
-		}
-	}
-
-	if !valid {
-		err_resp = fmt.Errorf("common name not allowed for role")
-	}
-	if !valid && hasSuffix {
-		err_resp = fmt.Errorf("sub-domains not allowed for role")
-	}
-
-	if err_resp != nil {
-		return nil, err_resp
-	}
-
-	// check the provided DNS sans against allowed domains
-	var cnMatch = false
-	b.Logger().Trace("checking dns sans" + dns_sans[0] + ", ...")
-	for u := range dns_sans {
-		valid = false
-		hasSuffix = false
-		cnMatch = cnMatch || dns_sans[u] == cn.(string) // check to make sure at least one of the dns_sans match the cn
-		b.Logger().Trace("checking SANs")
-		for _, v := range role.AllowedDomains {
-			if v == "*" || strings.HasSuffix(dns_sans[u], v) { // if it has the suffix..
-				hasSuffix = true
-				if dns_sans[u] == v || role.AllowSubdomains { // and there is an exact match, or subdomains are allowed..
-					valid = true // then it is valid
-				}
-			}
-		}
-		if !valid {
-			err_resp = fmt.Errorf("subject alternative name %s not allowed for provided role", dns_sans[u])
-		}
-		if !valid && hasSuffix {
-			err_resp = fmt.Errorf("sub-domains not allowed for role")
-		}
-	}
-
-	b.Logger().Trace("cnMatch = " + strconv.FormatBool(cnMatch))
-
-	if !cnMatch {
-		err_resp = fmt.Errorf("at least one DNS SAN is required to match the supplied Common Name for RFC 2818 compliance")
-	}
 
 	metadata := data.Get("metadata").(string)
 
@@ -445,7 +480,7 @@ func (b *keyfactorBackend) pathIssueSignCert(ctx context.Context, req *logical.R
 	//generate and submit CSR
 	b.Logger().Debug("generating the CSR...")
 	csr, key := b.generateCSR(cn.(string), ip_sans, dns_sans)
-	certs, serial, errr := b.submitCSR(ctx, req, csr, caName, templateName, metadata)
+	certs, serial, errr := b.submitCSR(ctx, req, csr, caName, templateName, dns_sans, ip_sans, metadata)
 
 	if errr != nil {
 		return nil, fmt.Errorf("could not enroll certificate: %s", errr)
@@ -467,15 +502,15 @@ func (b *keyfactorBackend) pathIssueSignCert(ctx context.Context, req *logical.R
 }
 
 func (b *keyfactorBackend) pathRevokeCert(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+	if b.System().ReplicationState().HasState(consts.ReplicationPerformanceStandby) {
+		return nil, logical.ErrReadOnly
+	}
+
 	serial := data.Get("serial").(string)
 	b.Logger().Debug("serial = " + serial)
 
 	if len(serial) == 0 {
-		return logical.ErrorResponse("The serial number must be provided"), nil
-	}
-
-	if b.System().ReplicationState().HasState(consts.ReplicationPerformanceStandby) {
-		return nil, logical.ErrReadOnly
+		return logical.ErrorResponse("the serial number must be provided"), fmt.Errorf("the serial number must be provided")
 	}
 
 	// We store and identify by lowercase colon-separated hex, but other
@@ -487,11 +522,6 @@ func (b *keyfactorBackend) pathRevokeCert(ctx context.Context, req *logical.Requ
 
 // Revokes a cert, and tries to be smart about error recovery
 func revokeCert(ctx context.Context, b *keyfactorBackend, req *logical.Request, serial string, fromLease bool) (*logical.Response, error) {
-	// As this backend is self-contained and this function does not hook into
-	// third parties to manage users or resources, if the mount is tainted,
-	// revocation doesn't matter anyways -- the CRL that would be written will
-	// be immediately blown away by the view being cleared. So we can simply
-	// fast path a successful exit.
 	if b.System().Tainted() {
 		return nil, nil
 	}
@@ -504,14 +534,6 @@ func revokeCert(ctx context.Context, b *keyfactorBackend, req *logical.Request, 
 
 	b.Logger().Debug("Closing idle connections")
 	client.httpClient.CloseIdleConnections()
-
-	// config, err := b.fetchConfig(ctx, req.Storage)
-	// if err != nil {
-	// 	return nil, err
-	// }
-	// if config == nil {
-	// 	return logical.ErrorResponse("could not load configuration"), nil
-	// }
 
 	kfId, err := req.Storage.Get(ctx, "kfId/"+serial) //retrieve the keyfactor certificate ID, keyed by sn here
 	if err != nil {
@@ -629,6 +651,57 @@ func revokeCert(ctx context.Context, b *keyfactorBackend, req *logical.Request, 
 		resp.Data["revocation_time_rfc3339"] = revInfo.RevocationTimeUTC.Format(time.RFC3339)
 	}
 	return resp, nil
+}
+
+func checkAllowedDomains(role *roleEntry, roleName string, domains []string) (bool, error) {
+	//check role permissions
+	var err_resp error
+	var valid bool
+	var hasSuffix bool
+	var disallowed []string
+
+	// check the allowed domains for a match.
+	// if allowed_domains is '*', allow any domain
+
+	for _, d := range domains {
+		for _, v := range role.AllowedDomains {
+			if v == "*" || strings.HasSuffix(d, v) { // if it has the suffix..
+				hasSuffix = true
+				if d == v || role.AllowSubdomains { // and there is an exact match, or subdomains are allowed..
+					valid = true // then it is valid
+				} else {
+					valid = false
+					disallowed = append(disallowed, d)
+				}
+			}
+		}
+	}
+	if !valid {
+		var disallowed_domains = strings.Join(disallowed, ",")
+		var allowed_domains = strings.Join(role.AllowedDomains, ",")
+		err_resp = fmt.Errorf("domain name not allowed for role: %s.  \n allowed domains for %s are: %s", disallowed_domains, roleName, allowed_domains)
+	}
+	if !valid && hasSuffix {
+		err_resp = fmt.Errorf("sub-domains are not allowed for role %s", roleName)
+	}
+
+	if err_resp != nil {
+		return false, err_resp
+	}
+
+	return true, nil
+}
+
+func (b *keyfactorBackend) isValidJSON(str string) bool {
+	var js json.RawMessage
+	err := json.Unmarshal([]byte(str), &js)
+	if err != nil {
+		b.Logger().Debug(err.Error())
+		return false
+	} else {
+		b.Logger().Debug("the metadata was able to be parsed as valid JSON")
+		return true
+	}
 }
 
 const pathIssueHelpSyn = `
