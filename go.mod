@@ -2,12 +2,10 @@ module github.com/keyfactor/hashicorp-vault-secrets-engine
 
 go 1.23
 
-toolchain go1.23.3
-
 require (
 	github.com/Keyfactor/keyfactor-auth-client-go v1.2.0
 	github.com/hashicorp/errwrap v1.0.0
-	github.com/hashicorp/go-hclog v1.5.0
+	github.com/hashicorp/go-hclog v1.6.3
 	github.com/hashicorp/vault/api v1.1.1
 	github.com/hashicorp/vault/sdk v0.2.1
 	go.mozilla.org/pkcs7 v0.9.0
