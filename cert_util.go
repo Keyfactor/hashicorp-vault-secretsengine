@@ -22,9 +22,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"io"
 	"net"
-	"net/http"
 	"strings"
 	"time"
 
@@ -238,20 +236,18 @@ func fetchCAInfo(ctx context.Context, req *logical.Request, b *keyfactorBackend,
 	// it hasn't been stored locally, we we need to retreive a certificate issued by the CA
 	// and then extract the chain
 
-	issued_certs, err := fetchCertIssuedByCA(ctx, req, b, caName) // we get the ID of a cert issued by the CA
+	issued_cert, err := fetchCertIssuedByCA(ctx, req, b, caName) // we get the ID of a cert issued by the CA
 
 	if err != nil {
 		return nil, errutil.InternalError{Err: fmt.Sprintf("failed to retreive any cert issued by the CA: %s", err)}
 	}
 
-	if len(issued_certs) == 0 {
+	if issued_cert == nil {
 		return nil, fmt.Errorf("no certificates issued by %s were found", caName)
 	}
 
-	issued_cert := issued_certs[0]
-
 	b.Logger().Trace("extracting the CA and Chain from the retreived cert.")
-	ca_chain, ca_cert, err := fetchChainAndCAForCert(ctx, req, b, issued_cert.ID) // we download the full cert and chain
+	ca_chain, ca_cert, err := fetchChainAndCAForCert(ctx, req, b, int(*issued_cert.Id)) // we download the full cert and chain
 	if err != nil {
 		b.Logger().Error("error getting full chain and CA for cert: %s", err)
 		return nil, err
@@ -362,7 +358,7 @@ func fetchCertBySerial(ctx context.Context, req *logical.Request, prefix, serial
 	return certEntry, nil
 }
 
-func fetchCertIssuedByCA(ctx context.Context, req *logical.Request, b *keyfactorBackend, caName string) (KeyfactorCertResponse, error) {
+func fetchCertIssuedByCA(ctx context.Context, req *logical.Request, b *keyfactorBackend, caName string) (*v1.CertificatesCertificateRetrievalResponse, error) {
 	// call certificates endpoint, limit results to 1, filter by CA name
 	config, err := b.fetchConfig(ctx, req.Storage)
 	if err != nil {
@@ -377,54 +373,38 @@ func fetchCertIssuedByCA(ctx context.Context, req *logical.Request, b *keyfactor
 	if err != nil {
 		b.Logger().Error("unable to create the http client")
 	}
-	// This is only needed when running as a vault extension
-	b.Logger().Debug("Closing idle connections")
-	client.httpClient.CloseIdleConnections()
-	caName = strings.Replace(caName, " ", "%20", -1)
-	reqUrl := config.KeyfactorUrl + "/" + config.CommandAPIPath + "/Certificates?pq.queryString=CA%20-eq%20%22" + caName + "%20%22&ReturnLimit=1"
 
-	b.Logger().Debug("url: " + reqUrl)
+	//caName = strings.Replace(caName, " ", "%20", -1)
 
-	httpReq, err := http.NewRequest("GET", reqUrl, nil)
-	if err != nil {
-		b.Logger().Info("Error forming request: {{err}}", err)
-	}
-
-	httpReq.Header.Add("x-keyfactor-requested-with", "APIClient")
-	httpReq.Header.Add("content-type", "application/json")
+	getCertRequest := v1.ApiGetCertificatesRequest{}
+	getCertRequest.QueryString("CA -eq " + caName)
+	getCertRequest.ReturnLimit(1)
 
 	// Send request and check status
-	b.Logger().Debug("About to connect to " + reqUrl + "for cert retrieval")
-	res, err := client.httpClient.Do(httpReq)
+	b.Logger().Debug("calling API with query string %s for cert retrieval", getCertRequest.QueryString)
+
+	apiRequest := client.V1.CertificateApi.NewGetCertificatesRequest(ctx)
+
+	certs, httpResponse, err := apiRequest.ApiService.GetCertificatesExecute(getCertRequest)
+
 	if err != nil {
 		b.Logger().Info("failed getting cert: {{err}}", err)
 		return nil, err
 	}
-	if res.StatusCode != 200 {
-		b.Logger().Error("request failed: server returned" + fmt.Sprint(res.StatusCode))
-		b.Logger().Error("Error response = " + fmt.Sprint(res.Body))
-		return nil, fmt.Errorf("error downloading certificate. returned status = %d\n ", res.StatusCode)
+
+	if httpResponse.StatusCode != 200 {
+		b.Logger().Error("request failed: server returned" + fmt.Sprint(httpResponse.StatusCode))
+		b.Logger().Error("Error response = " + fmt.Sprint(httpResponse.Body))
+		return nil, fmt.Errorf("error downloading certificate. returned status = %d\n ", httpResponse.StatusCode)
 	}
 
-	// Read response and return certificate and key
-	defer res.Body.Close()
+	b.Logger().Debug("response = ", certs)
 
-	body, err := io.ReadAll(res.Body)
-	if err != nil {
-		b.Logger().Info("Error reading response: {{err}}", err)
-		return nil, err
-	}
-
-	// Parse response
-	var r KeyfactorCertResponse
-	json.Unmarshal(body, &r)
-	b.Logger().Debug("response = ", r)
-
-	if len(r) == 0 {
+	if len(certs) == 0 {
 		return nil, fmt.Errorf("no certificates issued by CA %s found in Command.  At least 1 must exist in order to retreive the CA or CA chain certificate(s)", caName)
 	}
 
-	return r, nil
+	return &certs[0], nil
 }
 
 func fetchChainAndCAForCert(ctx context.Context, req *logical.Request, b *keyfactorBackend, kfCertId int) ([]string, string, error) {
@@ -443,49 +423,44 @@ func fetchChainAndCAForCert(ctx context.Context, req *logical.Request, b *keyfac
 	}
 	// This is only needed when running as a vault extension
 	b.Logger().Debug("Closing idle connections")
-	client.httpClient.CloseIdleConnections()
 
 	// Build request
-	reqUrl := config.KeyfactorUrl + "/" + config.CommandAPIPath + "/Certificates/Download"
-	b.Logger().Debug("url: " + reqUrl)
-	bodyContent := fmt.Sprintf(`{"CertID": %d, "IncludeChain": true, "ChainOrder": "endentityfirst" }`, kfCertId)
-	payload := strings.NewReader(bodyContent)
-	b.Logger().Debug("body: " + bodyContent)
-	httpReq, err := http.NewRequest("POST", reqUrl, payload)
-	if err != nil {
-		b.Logger().Info("Error forming request: %s", err)
+
+	certId := int32(kfCertId)
+	chainOrder := "endentityfirst"
+	includeChain := true
+
+	certDownloadRequest := v1.CertificatesCertificateDownloadRequest{
+		CertID:       *v1.NewNullableInt32(&certId),
+		ChainOrder:   *v1.NewNullableString(&chainOrder),
+		IncludeChain: &includeChain,
 	}
-	httpReq.Header.Add("x-keyfactor-requested-with", "APIClient")
-	httpReq.Header.Add("content-type", "application/json")
-	httpReq.Header.Add("x-certificateformat", "P7B")
+
+	apiRequest := client.V1.CertificateApi.NewCreateCertificatesDownloadRequest(ctx)
+	apiRequest.CertificatesCertificateDownloadRequest(certDownloadRequest)
+	apiRequest.XCertificateformat("P7B")
+
+	reqMap, _ := certDownloadRequest.ToMap()
 
 	// Send request and check status
-	b.Logger().Debug("About to connect to " + config.KeyfactorUrl + "for cert retrieval")
-	res, err := client.httpClient.Do(httpReq)
+	b.Logger().Debug("request parameters: %s", reqMap)
+	b.Logger().Debug("making request for cert retrieval")
+
+	response, httpResponse, err := apiRequest.Execute()
+
 	if err != nil {
 		b.Logger().Info(fmt.Sprintf("failed getting cert: %s", err))
 		return nil, "", err
 	}
-	if res.StatusCode != 200 {
-		b.Logger().Error("request failed: server returned" + fmt.Sprint(res.StatusCode))
-		b.Logger().Error("Error response = " + fmt.Sprint(res.Body))
-		return nil, "", fmt.Errorf("error downloading certificate. returned status = %d\n ", res.StatusCode)
+	if httpResponse.StatusCode != 200 {
+		b.Logger().Error("request failed: server returned" + fmt.Sprint(httpResponse.StatusCode))
+		b.Logger().Error("Error response = " + fmt.Sprint(httpResponse.Body))
+		return nil, "", fmt.Errorf("error downloading certificate. returned status = %d\n ", httpResponse.StatusCode)
 	}
 
-	// Read response and return certificate and key
-	defer res.Body.Close()
-	// Parse response
+	// Read response and convert to x509 certificates
 
-	body, err := io.ReadAll(res.Body)
-	if err != nil {
-		b.Logger().Info("Error reading response: %s", err)
-		return nil, "", err
-	}
-	var r KeyfactorCertDownloadResponse
-	json.Unmarshal(body, &r)
-	b.Logger().Debug("response = ", r)
-
-	certs, p7bErr := ConvertBase64P7BtoCertificates(r.Content)
+	certs, p7bErr := ConvertBase64P7BtoCertificates(response.GetContent())
 	if p7bErr != nil {
 		return nil, "", p7bErr
 	}

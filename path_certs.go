@@ -533,7 +533,6 @@ func revokeCert(ctx context.Context, b *keyfactorBackend, req *logical.Request, 
 	}
 
 	b.Logger().Debug("Closing idle connections")
-	client.httpClient.CloseIdleConnections()
 
 	kfId, err := req.Storage.Get(ctx, "kfId/"+serial) //retrieve the keyfactor certificate ID, keyed by sn here
 	if err != nil {
