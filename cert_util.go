@@ -28,6 +28,7 @@ import (
 	"strings"
 	"time"
 
+	v1 "github.com/Keyfactor/keyfactor-go-client-sdk/v24/api/keyfactor/v1"
 	"github.com/hashicorp/errwrap"
 	"github.com/hashicorp/vault/sdk/helper/errutil"
 	"github.com/hashicorp/vault/sdk/logical"
@@ -70,8 +71,7 @@ func (b *keyfactorBackend) submitCSR(ctx context.Context, req *logical.Request, 
 	}
 
 	location, _ := time.LoadLocation("UTC")
-	t := time.Now().In(location)
-	time := t.Format("2006-01-02T15:04:05")
+	time := time.Now().In(location)
 
 	// get client
 	client, err := b.getClient(ctx, req.Storage)
@@ -79,107 +79,75 @@ func (b *keyfactorBackend) submitCSR(ctx context.Context, req *logical.Request, 
 		return nil, "", fmt.Errorf("error getting client: %w", err)
 	}
 
-	b.Logger().Debug("Closing idle connections")
-	client.httpClient.CloseIdleConnections()
-
 	// build request parameter structure
+	var metadataMap map[string]interface{}
 
-	// build dns_sans payload string
-	dns_sans_payload_string := ""
-
-	for _, d := range dns_sans {
-		if d != dns_sans[0] {
-			dns_sans_payload_string += "," // pre-pend a comma before next entry if not the first entry
-		}
-		dns_sans_payload_string = dns_sans_payload_string + fmt.Sprintf("\"%s\"", d)
-	}
-	b.Logger().Debug("dns_sans payload string = %s", dns_sans_payload_string)
-
-	ip_sans_payload_string := ""
-
-	for _, i := range ip_sans {
-		if i != ip_sans[0] {
-			ip_sans_payload_string += ","
-		}
-		ip_sans_payload_string = ip_sans_payload_string + fmt.Sprintf("\"%s\"", i)
-	}
-	b.Logger().Debug("ip_sans payload string = %s", ip_sans_payload_string)
-
-	url := config.KeyfactorUrl + "/" + config.CommandAPIPath + "/Enrollment/CSR"
-	b.Logger().Debug("url: " + url)
-	bodyContent := "{\"CSR\": \"" + csr + "\", \"CertificateAuthority\":\"" + caName + "\", \"IncludeChain\": true, \"Metadata\": " + metaDataJson + ", \"Timestamp\": \"" + time + "\",\"Template\": \"" + templateName + "\""
-
-	sans_payload := "\"SANs\": {"
-
-	if dns_sans_payload_string != "" || ip_sans_payload_string != "" {
-		if dns_sans_payload_string != "" {
-			sans_payload += "\"dns\": [" + dns_sans_payload_string + "]"
-		}
-		if ip_sans_payload_string != "" {
-			sans_payload += ", \"ip\": [" + ip_sans_payload_string + "]"
-		}
-	}
-	sans_payload += "}"
-
-	b.Logger().Trace(fmt.Sprintf("sans_payload: %s", sans_payload))
-	bodyContent += ", " + sans_payload + "}"
-	payload := strings.NewReader(bodyContent)
-
-	b.Logger().Debug("request body: " + bodyContent)
-	httpReq, err := http.NewRequest("POST", url, payload)
+	err = json.Unmarshal([]byte(metaDataJson), &metadataMap)
 
 	if err != nil {
-		b.Logger().Info("Error forming request: {{err}}", err)
+		return nil, "", fmt.Errorf("there was an error parsing the Metadata as JSON: %w", err)
 	}
 
-	httpReq.Header.Add("x-keyfactor-requested-with", "APIClient")
-	httpReq.Header.Add("content-type", "application/json")
-	httpReq.Header.Add("x-certificateformat", "PEM")
+	inclChain := true
+
+	enrollmentRequest := v1.EnrollmentCSREnrollmentRequest{
+		CSR:                  csr,
+		CertificateAuthority: *v1.NewNullableString(&caName),
+		IncludeChain:         &inclChain,
+		Metadata:             metadataMap,
+		Timestamp:            &time,
+		Template:             *v1.NewNullableString(&templateName),
+		//SANs:                       map[string][]string{},
+	}
+
+	// SANs parameter
+	b.Logger().Debug("ip_sans = %s", ip_sans)
+	b.Logger().Debug("dns_sans = %s", dns_sans)
+
+	if len(ip_sans) > 0 {
+		enrollmentRequest.SANs["ip"] = ip_sans
+	}
+
+	if len(dns_sans) > 0 {
+		enrollmentRequest.SANs["dns"] = dns_sans
+	}
+
+	reqMap, _ := enrollmentRequest.ToMap()
+
+	b.Logger().Debug("request body: %s", reqMap)
 
 	// Send request and check status
 
-	b.Logger().Debug("About to connect to " + config.KeyfactorUrl + "for csr submission")
-	res, err := client.httpClient.Do(httpReq)
-	if err != nil {
-		b.Logger().Info("CSR Enrollment failed: {{err}}", err.Error())
-		return nil, "", err
-	}
-	if res.StatusCode != 200 {
-		b.Logger().Error("CSR Enrollment failed: server returned" + fmt.Sprint(res.StatusCode))
-		defer res.Body.Close()
-		body, _ := io.ReadAll(res.Body)
-		b.Logger().Error("Error response: " + string(body[:]))
-		return nil, "", fmt.Errorf("CSR Enrollment request failed with status code %d and error: "+string(body[:]), res.StatusCode)
-	}
+	b.Logger().Debug("about to connect to " + config.KeyfactorUrl + " with Keyfactor client for CSR submission")
 
-	// Read response and return certificate and key
+	apiRequest := client.V1.EnrollmentApi.NewCreateEnrollmentCSRRequest(ctx)
+	apiRequest.XCertificateformat("PEM")
+	apiRequest.EnrollmentCSREnrollmentRequest(enrollmentRequest)
 
-	defer res.Body.Close()
-	body, err := io.ReadAll(res.Body)
-	if err != nil {
-		b.Logger().Error("Error reading response: {{err}}", err)
+	resData, httpRes, err := apiRequest.Execute()
+
+	if err != nil || httpRes.StatusCode != 200 {
+		b.Logger().Error("there was an error performing CSR enrollment.  HttpStatusCode: %d, error: %s", httpRes.StatusCode, err)
 		return nil, "", err
 	}
 
-	// Parse response
-	var r map[string]interface{}
-	json.Unmarshal(body, &r)
-	b.Logger().Debug("response = ", r)
+	// Read certificates from response
+	certs, ok := resData.CertificateInformation.GetCertificatesOk()
 
-	inner := r["CertificateInformation"].(map[string]interface{})
-	certI := inner["Certificates"].([]interface{})
-	certs := make([]string, len(certI))
-	for i, v := range certI {
-		certs[i] = v.(string)
-		start := strings.Index(certs[i], "-----BEGIN CERTIFICATE-----")
-		certs[i] = certs[i][start:]
+	if !ok {
+		b.Logger().Error("unable to read certificate response : %s", err)
+		return nil, "", err
 	}
-	serial := inner["SerialNumber"].(string)
-	kfId := inner["KeyfactorID"].(float64)
 
-	b.Logger().Debug("parsed response: ", certI...)
+	serial := resData.CertificateInformation.SerialNumber
+	kfId := resData.CertificateInformation.KeyfactorID
 
-	caEntry, err := logical.StorageEntryJSON("ca_chain/", certs[1:])
+	resMap, _ := resData.ToMap()
+	b.Logger().Debug("full response: %s", resMap)
+
+	// store the ca chain
+
+	caEntry, err := logical.StorageEntryJSON("ca_chain/", certs[1:]) // certs after the first one are the chain
 	if err != nil {
 		b.Logger().Error("error creating ca_chain entry", err)
 	}
@@ -189,7 +157,11 @@ func (b *keyfactorBackend) submitCSR(ctx context.Context, req *logical.Request, 
 		b.Logger().Error("error storing the ca_chain locally", err)
 	}
 
-	key := "certs/" + normalizeSerial(serial)
+	// store the certificate
+
+	normalizedSerial := *serial.Get()
+
+	key := "certs/" + normalizedSerial
 
 	entry := &logical.StorageEntry{
 		Key:   key,
@@ -203,7 +175,7 @@ func (b *keyfactorBackend) submitCSR(ctx context.Context, req *logical.Request, 
 		return nil, "", errwrap.Wrapf("unable to store certificate locally: {{err}}", err)
 	}
 
-	kfIdEntry, err := logical.StorageEntryJSON("kfId/"+normalizeSerial(serial), kfId)
+	kfIdEntry, err := logical.StorageEntryJSON("kfId/"+normalizedSerial, kfId)
 	if err != nil {
 		return nil, "", err
 	}
@@ -213,7 +185,7 @@ func (b *keyfactorBackend) submitCSR(ctx context.Context, req *logical.Request, 
 		return nil, "", errwrap.Wrapf("unable to store the keyfactor ID for the certificate locally: {{err}}", err)
 	}
 
-	return certs, serial, nil
+	return certs, normalizedSerial, nil
 }
 
 // fetch the CA info from keyfactor

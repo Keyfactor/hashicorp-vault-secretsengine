@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/Keyfactor/keyfactor-go-client-sdk/v24"
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/logical"
 )
@@ -39,7 +40,7 @@ type keyfactorBackend struct {
 	*framework.Backend
 	configLock   sync.RWMutex
 	cachedConfig *keyfactorConfig
-	client       *keyfactorClient
+	client       *keyfactor.APIClient
 }
 
 // keyfactorBackend defines the target API keyfactorBackend
@@ -100,13 +101,12 @@ func (b *keyfactorBackend) invalidate(ctx context.Context, key string) {
 
 // getClient locks the backend as it configures and creates a
 // a new client for the target API
-func (b *keyfactorBackend) getClient(ctx context.Context, s logical.Storage) (*keyfactorClient, error) {
+func (b *keyfactorBackend) getClient(ctx context.Context, s logical.Storage) (*keyfactor.APIClient, error) {
 	b.configLock.RLock()
 	defer b.configLock.RUnlock()
 
 	if b.client != nil {
 		b.Logger().Debug("closing idle connections before returning existing client")
-		b.client.httpClient.CloseIdleConnections()
 		return b.client, nil
 	}
 

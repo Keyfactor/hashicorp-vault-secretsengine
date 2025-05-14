@@ -6,6 +6,7 @@ toolchain go1.23.3
 
 require (
 	github.com/Keyfactor/keyfactor-auth-client-go v1.2.0
+	github.com/Keyfactor/keyfactor-go-client-sdk/v24 v24.0.0
 	github.com/hashicorp/errwrap v1.0.0
 	github.com/hashicorp/go-hclog v1.5.0
 	github.com/hashicorp/vault/api v1.1.1
