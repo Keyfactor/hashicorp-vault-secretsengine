@@ -27,7 +27,6 @@ import (
 	"time"
 
 	v1 "github.com/Keyfactor/keyfactor-go-client-sdk/v24/api/keyfactor/v1"
-	"github.com/hashicorp/errwrap"
 	"github.com/hashicorp/vault/sdk/helper/errutil"
 	"github.com/hashicorp/vault/sdk/logical"
 	"go.mozilla.org/pkcs7"
@@ -78,7 +77,7 @@ func (b *keyfactorBackend) submitCSR(ctx context.Context, req *logical.Request, 
 	}
 
 	// build request parameter structure
-	var metadataMap map[string]interface{}
+	metadataMap := make(map[string]interface{})
 
 	err = json.Unmarshal([]byte(metaDataJson), &metadataMap)
 
@@ -95,12 +94,12 @@ func (b *keyfactorBackend) submitCSR(ctx context.Context, req *logical.Request, 
 		Metadata:             metadataMap,
 		Timestamp:            &time,
 		Template:             *v1.NewNullableString(&templateName),
-		//SANs:                       map[string][]string{},
+		SANs:                 make(map[string][]string),
 	}
 
 	// SANs parameter
-	b.Logger().Debug("ip_sans = %s", ip_sans)
-	b.Logger().Debug("dns_sans = %s", dns_sans)
+	b.Logger().Debug(fmt.Sprintf("ip_sans = %s", ip_sans))
+	b.Logger().Debug(fmt.Sprintf("dns_sans = %s", dns_sans))
 
 	if len(ip_sans) > 0 {
 		enrollmentRequest.SANs["ip"] = ip_sans
@@ -110,22 +109,27 @@ func (b *keyfactorBackend) submitCSR(ctx context.Context, req *logical.Request, 
 		enrollmentRequest.SANs["dns"] = dns_sans
 	}
 
-	reqMap, _ := enrollmentRequest.ToMap()
+	reqMap := make(map[string]interface{})
+	reqMap, err = enrollmentRequest.ToMap()
 
-	b.Logger().Debug("request body: %s", reqMap)
+	if err != nil {
+		b.Logger().Error(fmt.Sprintf("conversion of paramaters to map failed: %s", err.Error()))
+	}
+
+	b.Logger().Debug(fmt.Sprintf("request body: %s", reqMap))
 
 	// Send request and check status
 
-	b.Logger().Debug("about to connect to " + config.KeyfactorUrl + " with Keyfactor client for CSR submission")
+	b.Logger().Debug("setting parameters on the request.. ")
 
-	apiRequest := client.V1.EnrollmentApi.NewCreateEnrollmentCSRRequest(ctx)
-	apiRequest.XCertificateformat("PEM")
-	apiRequest.EnrollmentCSREnrollmentRequest(enrollmentRequest)
+	apiRequest := client.V1.EnrollmentApi.NewCreateEnrollmentCSRRequest(ctx).EnrollmentCSREnrollmentRequest(enrollmentRequest).XCertificateformat("PEM")
+
+	b.Logger().Debug("about to connect to " + config.KeyfactorUrl + " with Keyfactor client for CSR submission")
 
 	resData, httpRes, err := apiRequest.Execute()
 
 	if err != nil || httpRes.StatusCode != 200 {
-		b.Logger().Error("there was an error performing CSR enrollment.  HttpStatusCode: %d, error: %s", httpRes.StatusCode, err)
+		b.Logger().Error(fmt.Sprintf("there was an error performing CSR enrollment.  HttpStatusCode: %d, error: %s", httpRes.StatusCode, err))
 		return nil, "", err
 	}
 
@@ -133,7 +137,7 @@ func (b *keyfactorBackend) submitCSR(ctx context.Context, req *logical.Request, 
 	certs, ok := resData.CertificateInformation.GetCertificatesOk()
 
 	if !ok {
-		b.Logger().Error("unable to read certificate response : %s", err)
+		b.Logger().Error(fmt.Sprintf("unable to read certificate response : %s", err))
 		return nil, "", err
 	}
 
@@ -141,7 +145,7 @@ func (b *keyfactorBackend) submitCSR(ctx context.Context, req *logical.Request, 
 	kfId := resData.CertificateInformation.KeyfactorID
 
 	resMap, _ := resData.ToMap()
-	b.Logger().Debug("full response: %s", resMap)
+	b.Logger().Debug(fmt.Sprintf("full response: %s", resMap))
 
 	// store the ca chain
 
@@ -170,7 +174,7 @@ func (b *keyfactorBackend) submitCSR(ctx context.Context, req *logical.Request, 
 
 	err = req.Storage.Put(ctx, entry)
 	if err != nil {
-		return nil, "", errwrap.Wrapf("unable to store certificate locally: {{err}}", err)
+		return nil, "", fmt.Errorf("unable to store certificate locally: {{err}}", err)
 	}
 
 	kfIdEntry, err := logical.StorageEntryJSON("kfId/"+normalizedSerial, kfId)
@@ -180,7 +184,7 @@ func (b *keyfactorBackend) submitCSR(ctx context.Context, req *logical.Request, 
 
 	err = req.Storage.Put(ctx, kfIdEntry)
 	if err != nil {
-		return nil, "", errwrap.Wrapf("unable to store the keyfactor ID for the certificate locally: {{err}}", err)
+		return nil, "", fmt.Errorf("unable to store the keyfactor ID for the certificate locally: {{err}}", err)
 	}
 
 	return certs, normalizedSerial, nil
@@ -203,7 +207,7 @@ func fetchCAInfo(ctx context.Context, req *logical.Request, b *keyfactorBackend,
 	if includeChain {
 		storagePath = fmt.Sprintf("%s_chain", storagePath) // the storage path for the ca chain is "ca/{{ca name}}_chain"
 	}
-	b.Logger().Debug("local storage path = %s", storagePath)
+	b.Logger().Debug(fmt.Sprintf("local storage path = %s", storagePath))
 
 	caEntry, err := req.Storage.Get(ctx, storagePath)
 
@@ -546,67 +550,67 @@ func ConvertBase64P7BtoPEM(base64P7B string) ([]string, error) {
 	return pemEncodedCerts, nil
 }
 
-type KeyfactorCertResponse []struct {
-	ID                       int              `json:"Id"`
-	Thumbprint               string           `json:"Thumbprint"`
-	SerialNumber             string           `json:"SerialNumber"`
-	IssuedDN                 string           `json:"IssuedDN"`
-	IssuedCN                 string           `json:"IssuedCN"`
-	ImportDate               time.Time        `json:"ImportDate"`
-	NotBefore                time.Time        `json:"NotBefore"`
-	NotAfter                 time.Time        `json:"NotAfter"`
-	IssuerDN                 string           `json:"IssuerDN"`
-	PrincipalID              interface{}      `json:"PrincipalId"`
-	TemplateID               interface{}      `json:"TemplateId"`
-	CertState                int              `json:"CertState"`
-	KeySizeInBits            int              `json:"KeySizeInBits"`
-	KeyType                  int              `json:"KeyType"`
-	RequesterID              int              `json:"RequesterId"`
-	IssuedOU                 interface{}      `json:"IssuedOU"`
-	IssuedEmail              interface{}      `json:"IssuedEmail"`
-	KeyUsage                 int              `json:"KeyUsage"`
-	SigningAlgorithm         string           `json:"SigningAlgorithm"`
-	CertStateString          string           `json:"CertStateString"`
-	KeyTypeString            string           `json:"KeyTypeString"`
-	RevocationEffDate        interface{}      `json:"RevocationEffDate"`
-	RevocationReason         interface{}      `json:"RevocationReason"`
-	RevocationComment        interface{}      `json:"RevocationComment"`
-	CertificateAuthorityID   int              `json:"CertificateAuthorityId"`
-	CertificateAuthorityName string           `json:"CertificateAuthorityName"`
-	TemplateName             interface{}      `json:"TemplateName"`
-	ArchivedKey              bool             `json:"ArchivedKey"`
-	HasPrivateKey            bool             `json:"HasPrivateKey"`
-	PrincipalName            interface{}      `json:"PrincipalName"`
-	CertRequestID            interface{}      `json:"CertRequestId"`
-	RequesterName            string           `json:"RequesterName"`
-	ContentBytes             string           `json:"ContentBytes"`
-	ExtendedKeyUsages        []interface{}    `json:"ExtendedKeyUsages"`
-	SubjectAltNameElements   []interface{}    `json:"SubjectAltNameElements"`
-	CRLDistributionPoints    []interface{}    `json:"CRLDistributionPoints"`
-	LocationsCount           []interface{}    `json:"LocationsCount"`
-	SSLLocations             []interface{}    `json:"SSLLocations"`
-	Locations                []interface{}    `json:"Locations"`
-	Metadata                 Metadata         `json:"Metadata"`
-	CertificateKeyID         int              `json:"CertificateKeyId"`
-	CARowIndex               int              `json:"CARowIndex"`
-	DetailedKeyUsage         DetailedKeyUsage `json:"DetailedKeyUsage"`
-	KeyRecoverable           bool             `json:"KeyRecoverable"`
-}
-type Metadata struct {
-}
-type DetailedKeyUsage struct {
-	CrlSign          bool   `json:"CrlSign"`
-	DataEncipherment bool   `json:"DataEncipherment"`
-	DecipherOnly     bool   `json:"DecipherOnly"`
-	DigitalSignature bool   `json:"DigitalSignature"`
-	EncipherOnly     bool   `json:"EncipherOnly"`
-	KeyAgreement     bool   `json:"KeyAgreement"`
-	KeyCertSign      bool   `json:"KeyCertSign"`
-	KeyEncipherment  bool   `json:"KeyEncipherment"`
-	NonRepudiation   bool   `json:"NonRepudiation"`
-	HexCode          string `json:"HexCode"`
-}
+// type KeyfactorCertResponse []struct {
+// 	ID                       int              `json:"Id"`
+// 	Thumbprint               string           `json:"Thumbprint"`
+// 	SerialNumber             string           `json:"SerialNumber"`
+// 	IssuedDN                 string           `json:"IssuedDN"`
+// 	IssuedCN                 string           `json:"IssuedCN"`
+// 	ImportDate               time.Time        `json:"ImportDate"`
+// 	NotBefore                time.Time        `json:"NotBefore"`
+// 	NotAfter                 time.Time        `json:"NotAfter"`
+// 	IssuerDN                 string           `json:"IssuerDN"`
+// 	PrincipalID              interface{}      `json:"PrincipalId"`
+// 	TemplateID               interface{}      `json:"TemplateId"`
+// 	CertState                int              `json:"CertState"`
+// 	KeySizeInBits            int              `json:"KeySizeInBits"`
+// 	KeyType                  int              `json:"KeyType"`
+// 	RequesterID              int              `json:"RequesterId"`
+// 	IssuedOU                 interface{}      `json:"IssuedOU"`
+// 	IssuedEmail              interface{}      `json:"IssuedEmail"`
+// 	KeyUsage                 int              `json:"KeyUsage"`
+// 	SigningAlgorithm         string           `json:"SigningAlgorithm"`
+// 	CertStateString          string           `json:"CertStateString"`
+// 	KeyTypeString            string           `json:"KeyTypeString"`
+// 	RevocationEffDate        interface{}      `json:"RevocationEffDate"`
+// 	RevocationReason         interface{}      `json:"RevocationReason"`
+// 	RevocationComment        interface{}      `json:"RevocationComment"`
+// 	CertificateAuthorityID   int              `json:"CertificateAuthorityId"`
+// 	CertificateAuthorityName string           `json:"CertificateAuthorityName"`
+// 	TemplateName             interface{}      `json:"TemplateName"`
+// 	ArchivedKey              bool             `json:"ArchivedKey"`
+// 	HasPrivateKey            bool             `json:"HasPrivateKey"`
+// 	PrincipalName            interface{}      `json:"PrincipalName"`
+// 	CertRequestID            interface{}      `json:"CertRequestId"`
+// 	RequesterName            string           `json:"RequesterName"`
+// 	ContentBytes             string           `json:"ContentBytes"`
+// 	ExtendedKeyUsages        []interface{}    `json:"ExtendedKeyUsages"`
+// 	SubjectAltNameElements   []interface{}    `json:"SubjectAltNameElements"`
+// 	CRLDistributionPoints    []interface{}    `json:"CRLDistributionPoints"`
+// 	LocationsCount           []interface{}    `json:"LocationsCount"`
+// 	SSLLocations             []interface{}    `json:"SSLLocations"`
+// 	Locations                []interface{}    `json:"Locations"`
+// 	Metadata                 Metadata         `json:"Metadata"`
+// 	CertificateKeyID         int              `json:"CertificateKeyId"`
+// 	CARowIndex               int              `json:"CARowIndex"`
+// 	DetailedKeyUsage         DetailedKeyUsage `json:"DetailedKeyUsage"`
+// 	KeyRecoverable           bool             `json:"KeyRecoverable"`
+// }
+// type Metadata struct {
+// }
+// type DetailedKeyUsage struct {
+// 	CrlSign          bool   `json:"CrlSign"`
+// 	DataEncipherment bool   `json:"DataEncipherment"`
+// 	DecipherOnly     bool   `json:"DecipherOnly"`
+// 	DigitalSignature bool   `json:"DigitalSignature"`
+// 	EncipherOnly     bool   `json:"EncipherOnly"`
+// 	KeyAgreement     bool   `json:"KeyAgreement"`
+// 	KeyCertSign      bool   `json:"KeyCertSign"`
+// 	KeyEncipherment  bool   `json:"KeyEncipherment"`
+// 	NonRepudiation   bool   `json:"NonRepudiation"`
+// 	HexCode          string `json:"HexCode"`
+// }
 
-type KeyfactorCertDownloadResponse struct {
-	Content string `json:"Content"`
-}
+// type KeyfactorCertDownloadResponse struct {
+// 	Content string `json:"Content"`
+// }

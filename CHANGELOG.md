@@ -1,3 +1,7 @@
+- 1.4.2
+  - Updated the Hashicorp SDK libraries
+  - Incorporated the Keyfactor GO SDK for authentication and interaction with the Command API
+  
 - 1.4.1
   - Updated CA and CA chain retreival to work for CA's hosted outside of Command (EJBCA)
   - Updated Keyfactor Client library to 1.2.0

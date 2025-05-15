@@ -14,11 +14,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"strings"
 	"time"
 
+	v1 "github.com/Keyfactor/keyfactor-go-client-sdk/v24/api/keyfactor/v1"
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/helper/consts"
 	"github.com/hashicorp/vault/sdk/helper/errutil"
@@ -102,7 +101,7 @@ func pathCerts(b *keyfactorBackend) []*framework.Path {
 			},
 			Callbacks: map[logical.Operation]framework.OperationFunc{
 				logical.UpdateOperation: b.pathRevokeCert,
-				logical.CreateOperation: b.pathRevokeCert,
+				logical.RevokeOperation: b.pathRevokeCert,
 			},
 
 			HelpSynopsis:    pathRevokeHelpSyn,
@@ -334,7 +333,7 @@ func (b *keyfactorBackend) pathSign(ctx context.Context, req *logical.Request, d
 
 	// verify that any passed metadata string is valid JSON
 
-	if !b.isValidJSON(metadata) {
+	if !json.Valid([]byte(metadata)) {
 		err_resp := fmt.Errorf("'%s' is not a valid JSON string", metadata)
 		b.Logger().Error(err_resp.Error())
 	}
@@ -458,7 +457,7 @@ func (b *keyfactorBackend) pathIssueSignCert(ctx context.Context, req *logical.R
 	}
 	b.Logger().Debug(fmt.Sprintf("template name: %s", templateName))
 
-	//check role permissions
+	// verify that any passed metadata string is valid JSON
 
 	metadata := data.Get("metadata").(string)
 
@@ -466,9 +465,9 @@ func (b *keyfactorBackend) pathIssueSignCert(ctx context.Context, req *logical.R
 		metadata = "{}"
 	}
 
-	// verify that any passed metadata string is valid JSON
+	b.Logger().Debug(fmt.Sprintf("checking validity of metadata JSON... %s", metadata))
 
-	if !b.isValidJSON(metadata) {
+	if !json.Valid([]byte(metadata)) {
 		err_resp := fmt.Errorf("'%s' is not a valid JSON string", metadata)
 		b.Logger().Error(err_resp.Error())
 	}
@@ -532,8 +531,6 @@ func revokeCert(ctx context.Context, b *keyfactorBackend, req *logical.Request, 
 		return nil, fmt.Errorf("error getting client: %w", err)
 	}
 
-	b.Logger().Debug("Closing idle connections")
-
 	kfId, err := req.Storage.Get(ctx, "kfId/"+serial) //retrieve the keyfactor certificate ID, keyed by sn here
 	if err != nil {
 		b.Logger().Error("Unable to retreive Keyfactor certificate ID for cert with serial: "+serial, err)
@@ -549,37 +546,42 @@ func revokeCert(ctx context.Context, b *keyfactorBackend, req *logical.Request, 
 	}
 
 	// set up keyfactor api request
-	url := b.cachedConfig.KeyfactorUrl + "/" + b.cachedConfig.CommandAPIPath + kf_revoke_path
-	payload := fmt.Sprintf(`{
-		"CertificateIds": [
-		  %d
-		],
-		"Reason": 0,
-		"Comment": "%s",
-		"EffectiveDate": "%s"},
-		"CollectionId": 0
-	  }`, keyfactorId, "via HashiCorp Vault", time.Now().Format(time.RFC3339))
-	b.Logger().Debug("Sending revocation request.  payload =  " + payload)
-	httpReq, _ := http.NewRequest("POST", url, strings.NewReader(payload))
+	//url := b.cachedConfig.KeyfactorUrl + "/" + b.cachedConfig.CommandAPIPath + kf_revoke_path
 
-	httpReq.Header.Add("x-keyfactor-requested-with", "APIClient")
-	httpReq.Header.Add("content-type", "application/json")
+	certIds := []int32{int32(keyfactorId)}
+	revokeReason := v1.KeyfactorPKIEnumsRevokeCode(0)
+	effectiveDate := time.Now().UTC()
+	revokeComment := "via Hashicorp Vault"
+	collectionId := int32(0)
 
-	res, err := client.httpClient.Do(httpReq)
+	revokeReq := v1.CertificatesRevokeCertificateRequest{
+		CertificateIds: certIds,
+		Reason:         &revokeReason,
+		EffectiveDate:  &effectiveDate,
+		Comment:        *v1.NewNullableString(&revokeComment),
+		CollectionId:   *v1.NewNullableInt32(&collectionId),
+	}
+
+	// create the api call wrapper object
+	apiReq := client.V1.CertificateApi.NewCreateCertificatesRevokeRequest(ctx)
+
+	// apply the request parameters to the pending request
+	apiReq.CertificatesRevokeCertificateRequest(revokeReq)
+
+	// execute request
+
+	_, httpResponse, err := apiReq.Execute()
+
 	if err != nil {
 		b.Logger().Error("Revoke failed: {{err}}", err)
 		return nil, err
 	}
-	r, _ := io.ReadAll(res.Body)
 
-	b.Logger().Debug("response received.  Status code " + fmt.Sprint(res.StatusCode) + " response body: \n " + string(r[:]))
-	if res.StatusCode != 204 && res.StatusCode != 200 {
-		b.Logger().Info("revocation failed: server returned" + fmt.Sprint(res.StatusCode))
-		b.Logger().Info("error response = " + string(r[:]))
-		return nil, fmt.Errorf("revocation failed: server returned  %s\n ", res.Status)
+	if httpResponse.StatusCode != 204 && httpResponse.StatusCode != 200 {
+		b.Logger().Info("revocation failed: server returned" + fmt.Sprint(httpResponse.StatusCode))
+		b.Logger().Info("error response = " + fmt.Sprint(httpResponse.Body))
+		return nil, fmt.Errorf("revocation failed: server returned  %s\n ", httpResponse.Status)
 	}
-
-	defer res.Body.Close()
 
 	alreadyRevoked := false
 	var revInfo revocationInfo
@@ -691,17 +693,18 @@ func checkAllowedDomains(role *roleEntry, roleName string, domains []string) (bo
 	return true, nil
 }
 
-func (b *keyfactorBackend) isValidJSON(str string) bool {
-	var js json.RawMessage
-	err := json.Unmarshal([]byte(str), &js)
-	if err != nil {
-		b.Logger().Debug(err.Error())
-		return false
-	} else {
-		b.Logger().Debug("the metadata was able to be parsed as valid JSON")
-		return true
-	}
-}
+// func (b *keyfactorBackend) isValidJSON(str string) bool {
+// 	var js map[string]interface{}
+// 	err := json.Unmarshal([]byte(str), &js)
+
+// 	if err != nil {
+// 		b.Logger().Debug(err.Error())
+// 		return false
+// 	} else {
+// 		b.Logger().Debug("the metadata was able to be parsed as valid JSON")
+// 		return true
+// 	}
+// }
 
 const pathIssueHelpSyn = `
 Request a certificate using a certain role with the provided details.

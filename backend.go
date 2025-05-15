@@ -25,6 +25,8 @@ const (
 	operationPrefixKeyfactor string = "keyfactor"
 )
 
+const PluginVersion = "1.4.2" // this should match the release version of the plugin
+
 // Factory configures and returns backend
 func Factory(ctx context.Context, conf *logical.BackendConfig) (logical.Backend, error) {
 
@@ -68,6 +70,7 @@ func backend() *keyfactorBackend {
 		BackendType:    logical.TypeLogical,
 		Invalidate:     b.invalidate,
 		InitializeFunc: b.Initialize,
+		RunningVersion: "v" + PluginVersion,
 	}
 	return &b
 }

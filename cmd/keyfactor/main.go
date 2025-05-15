@@ -26,10 +26,11 @@ func main() {
 	tlsConfig := apiClientMeta.GetTLSConfig()
 	tlsProviderFunc := api.VaultPluginTLSProvider(tlsConfig)
 
-	if err := plugin.Serve(&plugin.ServeOpts{
+	err := plugin.ServeMultiplex(&plugin.ServeOpts{
 		BackendFactoryFunc: kfbackend.Factory,
 		TLSProviderFunc:    tlsProviderFunc,
-	}); err != nil {
+	})
+	if err != nil {
 		logger := hclog.New(&hclog.LoggerOptions{})
 		logger.Error("plugin shutting down", "error", err)
 		os.Exit(1)
