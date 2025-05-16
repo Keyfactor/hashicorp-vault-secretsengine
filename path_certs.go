@@ -501,10 +501,6 @@ func (b *keyfactorBackend) pathIssueSignCert(ctx context.Context, req *logical.R
 }
 
 func (b *keyfactorBackend) pathRevokeCert(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
-	if b.System().ReplicationState().HasState(consts.ReplicationPerformanceStandby) {
-		return nil, logical.ErrReadOnly
-	}
-
 	serial := data.Get("serial").(string)
 	b.Logger().Debug("serial = " + serial)
 
@@ -525,30 +521,35 @@ func revokeCert(ctx context.Context, b *keyfactorBackend, req *logical.Request, 
 		return nil, nil
 	}
 
+	serial = strings.ToUpper(serial)
+
 	// get client
 	client, err := b.getClient(ctx, req.Storage)
 	if err != nil {
 		return nil, fmt.Errorf("error getting client: %w", err)
 	}
 
+	b.Logger().Debug(fmt.Sprintf("retreiving the keyfactor ID for cert stored at path: %s", "kfId/"+serial))
+
 	kfId, err := req.Storage.Get(ctx, "kfId/"+serial) //retrieve the keyfactor certificate ID, keyed by sn here
 	if err != nil {
-		b.Logger().Error("Unable to retreive Keyfactor certificate ID for cert with serial: "+serial, err)
+		b.Logger().Error("unable to retreive Keyfactor certificate ID for cert with serial: "+serial, err)
 		return nil, err
 	}
-
-	var keyfactorId int
+	b.Logger().Debug(fmt.Sprintf("retreived the logical storage entry, decoding..."))
+	var keyfactorId int32
 	err = kfId.DecodeJSON(&keyfactorId)
-
 	if err != nil {
 		b.Logger().Error("Unable to parse stored certificate ID for cert with serial: "+serial, err)
 		return nil, err
 	}
 
+	b.Logger().Debug(fmt.Sprintf("decoded keyfactor ID value: %d", keyfactorId))
+
 	// set up keyfactor api request
 	//url := b.cachedConfig.KeyfactorUrl + "/" + b.cachedConfig.CommandAPIPath + kf_revoke_path
 
-	certIds := []int32{int32(keyfactorId)}
+	certIds := []int32{keyfactorId}
 	revokeReason := v1.KeyfactorPKIEnumsRevokeCode(0)
 	effectiveDate := time.Now().UTC()
 	revokeComment := "via Hashicorp Vault"
@@ -563,28 +564,29 @@ func revokeCert(ctx context.Context, b *keyfactorBackend, req *logical.Request, 
 	}
 
 	// create the api call wrapper object
-	apiReq := client.V1.CertificateApi.NewCreateCertificatesRevokeRequest(ctx)
-
-	// apply the request parameters to the pending request
-	apiReq.CertificatesRevokeCertificateRequest(revokeReq)
+	apiReq := client.V1.CertificateApi.NewCreateCertificatesRevokeRequest(ctx).CertificatesRevokeCertificateRequest(revokeReq)
 
 	// execute request
 
 	_, httpResponse, err := apiReq.Execute()
 
 	if err != nil {
-		b.Logger().Error("Revoke failed: {{err}}", err)
-		return nil, err
+		b.Logger().Error(fmt.Sprintf("revocation failed: %s \n %s", err, httpResponse.Body))
+		return nil, fmt.Errorf("revocation failed. \n http status: %s \n response body: %s", httpResponse.Status, httpResponse.Body)
 	}
 
 	if httpResponse.StatusCode != 204 && httpResponse.StatusCode != 200 {
 		b.Logger().Info("revocation failed: server returned" + fmt.Sprint(httpResponse.StatusCode))
 		b.Logger().Info("error response = " + fmt.Sprint(httpResponse.Body))
-		return nil, fmt.Errorf("revocation failed: server returned  %s\n ", httpResponse.Status)
+		return nil, fmt.Errorf("revocation failed: server returned  %s\n %s", httpResponse.Status, httpResponse.Body)
 	}
 
 	alreadyRevoked := false
 	var revInfo revocationInfo
+
+	b.Logger().Debug("revocation request was successful.")
+
+	b.Logger().Debug("updating values if previously revoked..")
 
 	revEntry, err := fetchCertBySerial(ctx, req, "revoked/", serial)
 	if err != nil {
@@ -604,6 +606,7 @@ func revokeCert(ctx context.Context, b *keyfactorBackend, req *logical.Request, 
 		}
 	}
 
+	b.Logger().Debug("updating local storage entry..")
 	if !alreadyRevoked {
 		certEntry, err := fetchCertBySerial(ctx, req, "certs/", serial)
 		if err != nil {
@@ -615,13 +618,6 @@ func revokeCert(ctx context.Context, b *keyfactorBackend, req *logical.Request, 
 			}
 		}
 		if certEntry == nil {
-			if fromLease {
-				// We can't write to revoked/ or update the CRL anyway because we don't have the cert,
-				// and there's no reason to expect this will work on a subsequent
-				// retry.  Just give up and let the lease get deleted.
-				b.Logger().Warn("expired certificate revoke failed because not found in storage, treating as success", "serial", serial)
-				return nil, nil
-			}
 			return logical.ErrorResponse(fmt.Sprintf("certificate with serial %s not found", serial)), nil
 		}
 		b.Logger().Debug("certEntry key = " + certEntry.Key)
@@ -692,19 +688,6 @@ func checkAllowedDomains(role *roleEntry, roleName string, domains []string) (bo
 
 	return true, nil
 }
-
-// func (b *keyfactorBackend) isValidJSON(str string) bool {
-// 	var js map[string]interface{}
-// 	err := json.Unmarshal([]byte(str), &js)
-
-// 	if err != nil {
-// 		b.Logger().Debug(err.Error())
-// 		return false
-// 	} else {
-// 		b.Logger().Debug("the metadata was able to be parsed as valid JSON")
-// 		return true
-// 	}
-// }
 
 const pathIssueHelpSyn = `
 Request a certificate using a certain role with the provided details.

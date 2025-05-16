@@ -94,20 +94,25 @@ func (b *keyfactorBackend) submitCSR(ctx context.Context, req *logical.Request, 
 		Metadata:             metadataMap,
 		Timestamp:            &time,
 		Template:             *v1.NewNullableString(&templateName),
-		SANs:                 make(map[string][]string),
 	}
 
 	// SANs parameter
 	b.Logger().Debug(fmt.Sprintf("ip_sans = %s", ip_sans))
 	b.Logger().Debug(fmt.Sprintf("dns_sans = %s", dns_sans))
 
+	sans := make(map[string][]string)
+
 	if len(ip_sans) > 0 {
-		enrollmentRequest.SANs["ip"] = ip_sans
+		sans["ip"] = ip_sans
 	}
 
 	if len(dns_sans) > 0 {
-		enrollmentRequest.SANs["dns"] = dns_sans
+		sans["dns"] = dns_sans
 	}
+
+	enrollmentRequest.SANs = sans
+
+	enrollmentRequest.SetSANs(sans)
 
 	reqMap := make(map[string]interface{})
 	reqMap, err = enrollmentRequest.ToMap()
@@ -117,6 +122,7 @@ func (b *keyfactorBackend) submitCSR(ctx context.Context, req *logical.Request, 
 	}
 
 	b.Logger().Debug(fmt.Sprintf("request body: %s", reqMap))
+	b.Logger().Debug(fmt.Sprintf("sans parameter: %s", enrollmentRequest.GetSANs()))
 
 	// Send request and check status
 
@@ -162,6 +168,7 @@ func (b *keyfactorBackend) submitCSR(ctx context.Context, req *logical.Request, 
 	// store the certificate
 
 	normalizedSerial := *serial.Get()
+	normalizedSerial = strings.ToUpper(normalizedSerial)
 
 	key := "certs/" + normalizedSerial
 
@@ -181,6 +188,8 @@ func (b *keyfactorBackend) submitCSR(ctx context.Context, req *logical.Request, 
 	if err != nil {
 		return nil, "", err
 	}
+
+	b.Logger().Debug(fmt.Sprintf("writing the Keyfactor ID to storage for future operations: key = %s, value = %s", kfIdEntry.Key, kfIdEntry.Value))
 
 	err = req.Storage.Put(ctx, kfIdEntry)
 	if err != nil {
@@ -392,14 +401,14 @@ func fetchCertIssuedByCA(ctx context.Context, req *logical.Request, b *keyfactor
 	certs, httpResponse, err := apiRequest.ApiService.GetCertificatesExecute(getCertRequest)
 
 	if err != nil {
-		b.Logger().Info("failed getting cert: {{err}}", err)
+		b.Logger().Info(fmt.Sprintf("failed getting cert: %s", err.Error()))
 		return nil, err
 	}
 
 	if httpResponse.StatusCode != 200 {
 		b.Logger().Error("request failed: server returned" + fmt.Sprint(httpResponse.StatusCode))
 		b.Logger().Error("Error response = " + fmt.Sprint(httpResponse.Body))
-		return nil, fmt.Errorf("error downloading certificate. returned status = %d\n ", httpResponse.StatusCode)
+		return nil, fmt.Errorf("error downloading certificate. returned status = %d\n %s", httpResponse.StatusCode, httpResponse.Body)
 	}
 
 	b.Logger().Debug("response = ", certs)
@@ -440,26 +449,24 @@ func fetchChainAndCAForCert(ctx context.Context, req *logical.Request, b *keyfac
 		IncludeChain: &includeChain,
 	}
 
-	apiRequest := client.V1.CertificateApi.NewCreateCertificatesDownloadRequest(ctx)
-	apiRequest.CertificatesCertificateDownloadRequest(certDownloadRequest)
-	apiRequest.XCertificateformat("P7B")
+	apiRequest := client.V1.CertificateApi.NewCreateCertificatesDownloadRequest(ctx).CertificatesCertificateDownloadRequest(certDownloadRequest).XCertificateformat("P7B")
 
 	reqMap, _ := certDownloadRequest.ToMap()
 
 	// Send request and check status
-	b.Logger().Debug("request parameters: %s", reqMap)
+	b.Logger().Debug(fmt.Sprintf("request parameters: %s", reqMap))
 	b.Logger().Debug("making request for cert retrieval")
 
 	response, httpResponse, err := apiRequest.Execute()
 
 	if err != nil {
-		b.Logger().Info(fmt.Sprintf("failed getting cert: %s", err))
-		return nil, "", err
+		b.Logger().Info(fmt.Sprintf("failed getting cert: %s \n %s", err, httpResponse.Body))
+		return nil, "", fmt.Errorf("failed to retreive CA Chain.\n http status code: %d \n %s", httpResponse.StatusCode, httpResponse.Body)
 	}
 	if httpResponse.StatusCode != 200 {
 		b.Logger().Error("request failed: server returned" + fmt.Sprint(httpResponse.StatusCode))
 		b.Logger().Error("Error response = " + fmt.Sprint(httpResponse.Body))
-		return nil, "", fmt.Errorf("error downloading certificate. returned status = %d\n ", httpResponse.StatusCode)
+		return nil, "", fmt.Errorf("error downloading certificate. returned status = %d\n %s", httpResponse.StatusCode, httpResponse.Body)
 	}
 
 	// Read response and convert to x509 certificates
@@ -499,7 +506,7 @@ func fetchChainAndCAForCert(ctx context.Context, req *logical.Request, b *keyfac
 }
 
 func normalizeSerial(serial string) string {
-	return strings.Replace(strings.ToLower(serial), ":", "-", -1)
+	return strings.Replace(strings.ToUpper(serial), ":", "-", -1)
 }
 
 // ConvertBase64P7BtoCertificates takes a base64 encoded P7B certificate string and returns a slice of *x509.Certificate.
