@@ -45,7 +45,7 @@ request`,
 		Type: framework.TypeString,
 		Description: `The requested common name; if you want more than
 one, specify the alternative names in the
-alt_names map. If email protection is enabled
+dns_sans. If email protection is enabled
 in the role, this may be an email address.`,
 		Required: true,
 	}
