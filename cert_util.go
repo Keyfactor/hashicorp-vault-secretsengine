@@ -22,6 +22,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"strings"
 	"time"
@@ -128,15 +129,24 @@ func (b *keyfactorBackend) submitCSR(ctx context.Context, req *logical.Request, 
 
 	b.Logger().Debug("setting parameters on the request.. ")
 
-	apiRequest := client.V1.EnrollmentApi.NewCreateEnrollmentCSRRequest(ctx).EnrollmentCSREnrollmentRequest(enrollmentRequest).XCertificateformat("PEM")
+	apiRequest := client.V1.EnrollmentApi.NewCreateEnrollmentCSRRequest(ctx).ForceEnroll(true).EnrollmentCSREnrollmentRequest(enrollmentRequest).XCertificateformat("PEM")
 
 	b.Logger().Debug("about to connect to " + config.KeyfactorUrl + " with Keyfactor client for CSR submission")
 
 	resData, httpRes, err := apiRequest.Execute()
 
 	if err != nil || httpRes.StatusCode != 200 {
-		b.Logger().Error(fmt.Sprintf("there was an error performing CSR enrollment.  HttpStatusCode: %d, error: %s", httpRes.StatusCode, err))
-		return nil, "", err
+		body, bodyErr := io.ReadAll(httpRes.Body)
+		errMsg := ""
+
+		if bodyErr != nil {
+			b.Logger().Error(fmt.Sprintf("there was an error reading the response body: %v", bodyErr))
+			errMsg = err.Error()
+		} else {
+			errMsg = string(body)
+		}
+		b.Logger().Error(fmt.Sprintf("there was an error performing CSR enrollment.  HttpStatusCode: %d, error: %s", httpRes.StatusCode, errMsg))
+		return nil, "", fmt.Errorf(errMsg)
 	}
 
 	// Read certificates from response
@@ -389,19 +399,17 @@ func fetchCertIssuedByCA(ctx context.Context, req *logical.Request, b *keyfactor
 
 	//caName = strings.Replace(caName, " ", "%20", -1)
 
-	getCertRequest := v1.ApiGetCertificatesRequest{}
-	getCertRequest.QueryString("CA -eq " + caName)
-	getCertRequest.ReturnLimit(1)
-
 	// Send request and check status
-	b.Logger().Debug("calling API with query string %s for cert retrieval", getCertRequest.QueryString)
 
-	apiRequest := client.V1.CertificateApi.NewGetCertificatesRequest(ctx)
+	b.Logger().Debug(fmt.Sprintf("calling API with to fetch cert issued by %s", caName))
 
-	certs, httpResponse, err := apiRequest.ApiService.GetCertificatesExecute(getCertRequest)
+	certs, httpResponse, err := client.V1.CertificateApi.NewGetCertificatesRequest(ctx).QueryString("CA -eq \"" + caName + "\"").ReturnLimit(1).Execute()
+
+	//certs, httpResponse, err := apiRequest.Execute()
 
 	if err != nil {
-		b.Logger().Info(fmt.Sprintf("failed getting cert: %s", err.Error()))
+		b.Logger().Error(fmt.Sprintf("failed to retreive cert: %s", err.Error()))
+		b.Logger().Debug(fmt.Sprintf("http status code: %d, http response: %s", httpResponse.StatusCode, httpResponse.Body))
 		return nil, err
 	}
 
@@ -411,7 +419,7 @@ func fetchCertIssuedByCA(ctx context.Context, req *logical.Request, b *keyfactor
 		return nil, fmt.Errorf("error downloading certificate. returned status = %d\n %s", httpResponse.StatusCode, httpResponse.Body)
 	}
 
-	b.Logger().Debug("response = ", certs)
+	b.Logger().Debug(fmt.Sprintf("cert issued by CA response: %s", certs))
 
 	if len(certs) == 0 {
 		return nil, fmt.Errorf("no certificates issued by CA %s found in Command.  At least 1 must exist in order to retreive the CA or CA chain certificate(s)", caName)
@@ -434,8 +442,6 @@ func fetchChainAndCAForCert(ctx context.Context, req *logical.Request, b *keyfac
 	if err != nil {
 		b.Logger().Error("unable to create the http client")
 	}
-	// This is only needed when running as a vault extension
-	b.Logger().Debug("Closing idle connections")
 
 	// Build request
 

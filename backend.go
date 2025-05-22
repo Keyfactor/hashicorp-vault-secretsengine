@@ -23,9 +23,8 @@ import (
 
 const (
 	operationPrefixKeyfactor string = "keyfactor"
+	PluginVersion                   = "1.4.2" // this should match the release version of the plugin
 )
-
-const PluginVersion = "1.4.2" // this should match the release version of the plugin
 
 // Factory configures and returns backend
 func Factory(ctx context.Context, conf *logical.BackendConfig) (logical.Backend, error) {
@@ -109,7 +108,7 @@ func (b *keyfactorBackend) getClient(ctx context.Context, s logical.Storage) (*k
 	defer b.configLock.RUnlock()
 
 	if b.client != nil {
-		b.Logger().Debug("closing idle connections before returning existing client")
+		b.Logger().Trace("returning existing client")
 		return b.client, nil
 	}
 
@@ -130,5 +129,5 @@ func (b *keyfactorBackend) getClient(ctx context.Context, s logical.Storage) (*k
 }
 
 const keyfactorHelp = `
-The Keyfactor backend is a pki service that issues and manages certificates.
+The Keyfactor backend is a pki service that issues and manages certificates via the Keyfactor Command platform.
 `
