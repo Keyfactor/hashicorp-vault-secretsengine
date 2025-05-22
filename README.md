@@ -620,9 +620,12 @@ instance of the plugin is named "keyfactor".
 ### Read CA cert
 
 `vault read keyfactor/ca ca=<ca name>`
+> Note: The certificate for the CA needs to have been imported into Command for this endpoint to return the CA Certificate
 
 ### Read CA chain
 
 `vault read keyfactor/ca_chain ca=<ca name>`
+> Note: _All_ certificates in the chain need to have been imported into Command for this endpoint to return the CA Certificate Chain
+
 
 
