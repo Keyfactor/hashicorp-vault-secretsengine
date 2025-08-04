@@ -16,12 +16,14 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/Keyfactor/keyfactor-go-client-sdk/v24"
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/logical"
 )
 
 const (
 	operationPrefixKeyfactor string = "keyfactor"
+	PluginVersion                   = "1.4.2" // this should match the release version of the plugin
 )
 
 // Factory configures and returns backend
@@ -39,7 +41,7 @@ type keyfactorBackend struct {
 	*framework.Backend
 	configLock   sync.RWMutex
 	cachedConfig *keyfactorConfig
-	client       *keyfactorClient
+	client       *keyfactor.APIClient
 }
 
 // keyfactorBackend defines the target API keyfactorBackend
@@ -67,6 +69,7 @@ func backend() *keyfactorBackend {
 		BackendType:    logical.TypeLogical,
 		Invalidate:     b.invalidate,
 		InitializeFunc: b.Initialize,
+		RunningVersion: "v" + PluginVersion,
 	}
 	return &b
 }
@@ -100,13 +103,12 @@ func (b *keyfactorBackend) invalidate(ctx context.Context, key string) {
 
 // getClient locks the backend as it configures and creates a
 // a new client for the target API
-func (b *keyfactorBackend) getClient(ctx context.Context, s logical.Storage) (*keyfactorClient, error) {
+func (b *keyfactorBackend) getClient(ctx context.Context, s logical.Storage) (*keyfactor.APIClient, error) {
 	b.configLock.RLock()
 	defer b.configLock.RUnlock()
 
 	if b.client != nil {
-		b.Logger().Debug("closing idle connections before returning existing client")
-		b.client.httpClient.CloseIdleConnections()
+		b.Logger().Trace("returning existing client")
 		return b.client, nil
 	}
 
@@ -127,5 +129,5 @@ func (b *keyfactorBackend) getClient(ctx context.Context, s logical.Storage) (*k
 }
 
 const keyfactorHelp = `
-The Keyfactor backend is a pki service that issues and manages certificates.
+The Keyfactor backend is a pki service that issues and manages certificates via the Keyfactor Command platform.
 `
