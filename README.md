@@ -462,6 +462,8 @@ kftrain.lab".
 
 These properties can also be set in the certificate template configured in Command. If they differ, the most restrictive setting is applied.
 
+Here is a table of [Role Configuration Options](./docs/role_options.md)
+
 ## Using the plugin
 
 ### Issuing Certificates
