@@ -1,5 +1,5 @@
 /*
- *  Copyright 2024 Keyfactor
+ *  Copyright 2026 Keyfactor
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the License.
  *  You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
  *  Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS,
@@ -26,10 +26,11 @@ func main() {
 	tlsConfig := apiClientMeta.GetTLSConfig()
 	tlsProviderFunc := api.VaultPluginTLSProvider(tlsConfig)
 
-	if err := plugin.Serve(&plugin.ServeOpts{
+	err := plugin.ServeMultiplex(&plugin.ServeOpts{
 		BackendFactoryFunc: kfbackend.Factory,
 		TLSProviderFunc:    tlsProviderFunc,
-	}); err != nil {
+	})
+	if err != nil {
 		logger := hclog.New(&hclog.LoggerOptions{})
 		logger.Error("plugin shutting down", "error", err)
 		os.Exit(1)

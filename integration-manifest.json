@@ -1,7 +1,7 @@
 {
   "$schema": "https://keyfactor.github.io/integration-manifest-schema.json",
   "integration_type": "api-client",
-  "name": "keyfactor-vault-secrets-engine",
+  "name": "Keyfactor Hashicorp Vault Secrets Engine",
   "status": "production",
   "support_level": "community",
   "link_github": false,
