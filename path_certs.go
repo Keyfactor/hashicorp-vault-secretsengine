@@ -1,5 +1,5 @@
 /*
- *  Copyright 2024 Keyfactor
+ *  Copyright 2026 Keyfactor
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the License.
  *  You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
  *  Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS,
@@ -11,8 +11,11 @@ package kfbackend
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -116,7 +119,26 @@ func (b *keyfactorBackend) pathFetchCertList(ctx context.Context, req *logical.R
 		return nil, err
 	}
 
-	return logical.ListResponse(entries), nil
+	// Build a key_info map so that listing shows the common name alongside each
+	// serial number. The common name is parsed from the stored certificate.
+	keyInfo := map[string]interface{}{}
+	for _, serial := range entries {
+		entry, gErr := req.Storage.Get(ctx, "certs/"+serial)
+		if gErr != nil || entry == nil {
+			continue
+		}
+		commonName := ""
+		if block, _ := pem.Decode(entry.Value); block != nil {
+			if parsed, pErr := x509.ParseCertificate(block.Bytes); pErr == nil {
+				commonName = parsed.Subject.CommonName
+			}
+		}
+		keyInfo[serial] = map[string]interface{}{
+			"common_name": commonName,
+		}
+	}
+
+	return logical.ListResponseWithInfo(entries, keyInfo), nil
 }
 
 func (b *keyfactorBackend) pathFetchCert(ctx context.Context, req *logical.Request, data *framework.FieldData) (response *logical.Response, retErr error) {
@@ -211,8 +233,34 @@ reply:
 	case response.IsError():
 		return response, nil
 	default:
-		response.Data["certificate"] = string(certificate)
+		response.Data["serial_number"] = normalizeSerial(serial)
+		response.Data["certificate"] = certificate
 		response.Data["revocation_time"] = revocationTime
+
+		// Parse the stored certificate to surface the common name and
+		// expiration date. Parse failures are non-fatal; we still return what
+		// we have.
+		if block, _ := pem.Decode([]byte(certificate)); block != nil {
+			if parsed, pErr := x509.ParseCertificate(block.Bytes); pErr == nil {
+				response.Data["common_name"] = parsed.Subject.CommonName
+				response.Data["expiration"] = parsed.NotAfter.UTC().Format(time.RFC3339)
+			} else {
+				b.Logger().Warn("unable to parse stored certificate", "serial", serial, "error", pErr)
+			}
+		}
+
+		// Include any Command metadata stored for this certificate. Omit the
+		// field entirely when there is none, since most certificates won't
+		// have metadata.
+		metadata := map[string]interface{}{}
+		if metaEntry, mErr := req.Storage.Get(ctx, "metadata/"+normalizeSerial(serial)); mErr == nil && metaEntry != nil {
+			if dErr := metaEntry.DecodeJSON(&metadata); dErr != nil {
+				b.Logger().Warn("unable to decode stored certificate metadata", "serial", serial, "error", dErr)
+			}
+		}
+		if len(metadata) > 0 {
+			response.Data["metadata"] = metadata
+		}
 	}
 
 	return
@@ -270,8 +318,7 @@ func (b *keyfactorBackend) pathSign(ctx context.Context, req *logical.Request, d
 	b.Logger().Debug("parsing dns_sans...")
 	dns_sans_string, ok := data.GetOk("dns_sans")
 
-	if ok && dns_sans_string != nil && dns_sans_string == "" {
-		dns_sans_string = dns_sans_string.(string)
+	if ok && dns_sans_string != nil && dns_sans_string.(string) != "" {
 		dns_sans = strings.Split(dns_sans_string.(string), ",")
 		b.Logger().Debug(fmt.Sprintf("dns_sans = %s", dns_sans))
 
@@ -299,12 +346,21 @@ func (b *keyfactorBackend) pathSign(ctx context.Context, req *logical.Request, d
 		b.Logger().Debug("no IP SANs provided")
 	}
 
+	// load the configuration so we can fall back to configured defaults
+	config, err := b.fetchConfig(ctx, req.Storage)
+	if err != nil {
+		return nil, err
+	}
+	if config == nil {
+		return logical.ErrorResponse("the backend is not configured; write to the config path first"), nil
+	}
+
 	// get the CA name
 	b.Logger().Debug("parsing ca...")
 	caName := data.Get("ca").(string)
 	if caName == "" {
 		b.Logger().Debug("no ca passed, retreiving from config")
-		caName = b.cachedConfig.CertAuthority
+		caName = config.CertAuthority
 	}
 	if caName == "" {
 		return logical.ErrorResponse("no certificate authority was provided and there is no configuration entry for ca"), fmt.Errorf("CA name is required")
@@ -316,7 +372,7 @@ func (b *keyfactorBackend) pathSign(ctx context.Context, req *logical.Request, d
 	templateName := data.Get("template").(string)
 	if templateName == "" {
 		b.Logger().Debug("no template name in parameters, retrieving from config")
-		templateName = b.cachedConfig.CertTemplate
+		templateName = config.CertTemplate
 		if templateName == "" {
 			return logical.ErrorResponse("no certificate template name was provided and there is no configuration entry for 'template'"), fmt.Errorf("template name is required")
 		}
@@ -332,9 +388,8 @@ func (b *keyfactorBackend) pathSign(ctx context.Context, req *logical.Request, d
 	}
 
 	// verify that any passed metadata string is valid JSON
-
 	if !json.Valid([]byte(metadata)) {
-		err_resp := fmt.Errorf("'%s' is not a valid JSON string", metadata)
+		err_resp = fmt.Errorf("'%s' is not a valid JSON string", metadata)
 		b.Logger().Error(err_resp.Error())
 	}
 
@@ -347,12 +402,24 @@ func (b *keyfactorBackend) pathSign(ctx context.Context, req *logical.Request, d
 	if errr != nil {
 		return nil, fmt.Errorf("could not sign csr: %s", errr)
 	}
+	if len(certs) < 2 {
+		return nil, fmt.Errorf("expected a certificate and an issuing CA in the enrollment response, but got %d certificate(s)", len(certs))
+	}
+
 	response := &logical.Response{
 		Data: map[string]interface{}{
 			"certificate":   certs[0],
 			"issuing_ca":    certs[1],
 			"serial_number": serial,
 		},
+	}
+
+	// echo the submitted metadata back in the response (it was validated as
+	// JSON above and parsed by submitCSR); omit it entirely when empty.
+	metadataMap := map[string]interface{}{}
+	_ = json.Unmarshal([]byte(metadata), &metadataMap)
+	if len(metadataMap) > 0 {
+		response.Data["metadata"] = metadataMap
 	}
 
 	return response, nil
@@ -436,12 +503,21 @@ func (b *keyfactorBackend) pathIssueSignCert(ctx context.Context, req *logical.R
 		ip_sans = strings.Split(ip_sans_string.(string), ",")
 	}
 
+	// load the configuration so we can fall back to configured defaults
+	config, cfgErr := b.fetchConfig(ctx, req.Storage)
+	if cfgErr != nil {
+		return nil, cfgErr
+	}
+	if config == nil {
+		return logical.ErrorResponse("the backend is not configured; write to the config path first"), nil
+	}
+
 	// get the CA name
 	b.Logger().Debug("parsing ca...")
 	caName := data.Get("ca").(string)
 	if caName == "" {
 		b.Logger().Debug("no ca passed, retreiving from config")
-		caName = b.cachedConfig.CertAuthority
+		caName = config.CertAuthority
 	}
 	if caName == "" {
 		return logical.ErrorResponse("no certificate authority was provided and there is no configuration entry for ca"), fmt.Errorf("CA name is required")
@@ -453,7 +529,7 @@ func (b *keyfactorBackend) pathIssueSignCert(ctx context.Context, req *logical.R
 	templateName := data.Get("template").(string)
 	if templateName == "" {
 		b.Logger().Debug("no template name in parameters, retrieving from config")
-		templateName = b.cachedConfig.CertTemplate
+		templateName = config.CertTemplate
 	}
 	b.Logger().Debug(fmt.Sprintf("template name: %s", templateName))
 
@@ -468,7 +544,7 @@ func (b *keyfactorBackend) pathIssueSignCert(ctx context.Context, req *logical.R
 	b.Logger().Debug(fmt.Sprintf("checking validity of metadata JSON... %s", metadata))
 
 	if !json.Valid([]byte(metadata)) {
-		err_resp := fmt.Errorf("'%s' is not a valid JSON string", metadata)
+		err_resp = fmt.Errorf("'%s' is not a valid JSON string", metadata)
 		b.Logger().Error(err_resp.Error())
 	}
 
@@ -478,11 +554,17 @@ func (b *keyfactorBackend) pathIssueSignCert(ctx context.Context, req *logical.R
 
 	//generate and submit CSR
 	b.Logger().Debug("generating the CSR...")
-	csr, key := b.generateCSR(cn.(string), ip_sans, dns_sans)
+	csr, key, csrErr := b.generateCSR(cn.(string), ip_sans, dns_sans)
+	if csrErr != nil {
+		return nil, fmt.Errorf("could not generate CSR: %w", csrErr)
+	}
 	certs, serial, errr := b.submitCSR(ctx, req, csr, caName, templateName, dns_sans, ip_sans, metadata)
 
 	if errr != nil {
 		return nil, fmt.Errorf("could not enroll certificate: %s", errr)
+	}
+	if len(certs) < 2 {
+		return nil, fmt.Errorf("expected a certificate and an issuing CA in the enrollment response, but got %d certificate(s)", len(certs))
 	}
 
 	// Conform response to Vault PKI API
@@ -495,6 +577,14 @@ func (b *keyfactorBackend) pathIssueSignCert(ctx context.Context, req *logical.R
 			"revocation_time":  0,
 			"serial_number":    serial,
 		},
+	}
+
+	// echo the submitted metadata back in the response (it was validated as
+	// JSON above and parsed by submitCSR); omit it entirely when empty.
+	metadataMap := map[string]interface{}{}
+	_ = json.Unmarshal([]byte(metadata), &metadataMap)
+	if len(metadataMap) > 0 {
+		response.Data["metadata"] = metadataMap
 	}
 
 	return response, nil
@@ -515,6 +605,25 @@ func (b *keyfactorBackend) pathRevokeCert(ctx context.Context, req *logical.Requ
 	return revokeCert(ctx, b, req, serial, false)
 }
 
+// decodeStoredKeyfactorID decodes a Keyfactor certificate ID from its stored
+// entry. It intentionally uses a plain json.Unmarshal rather than the
+// compression-aware logical.StorageEntry.DecodeJSON: the ID is stored as a bare
+// JSON number, and DecodeJSON inspects the leading byte for a Vault compression
+// canary. An ID whose decimal form begins with a canary character (notably '4',
+// the LZ4 canary) would otherwise be misread as compressed data and fail with
+// "lz4: bad magic number". The value is always stored uncompressed, so a plain
+// unmarshal is correct and backward-compatible.
+func decodeStoredKeyfactorID(entry *logical.StorageEntry) (int32, error) {
+	if entry == nil {
+		return 0, fmt.Errorf("keyfactor ID storage entry is nil")
+	}
+	var id int32
+	if err := json.Unmarshal(entry.Value, &id); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
 // Revokes a cert, and tries to be smart about error recovery
 func revokeCert(ctx context.Context, b *keyfactorBackend, req *logical.Request, serial string, fromLease bool) (*logical.Response, error) {
 	if b.System().Tainted() {
@@ -533,14 +642,16 @@ func revokeCert(ctx context.Context, b *keyfactorBackend, req *logical.Request, 
 
 	kfId, err := req.Storage.Get(ctx, "kfId/"+serial) //retrieve the keyfactor certificate ID, keyed by sn here
 	if err != nil {
-		b.Logger().Error("unable to retreive Keyfactor certificate ID for cert with serial: "+serial, err)
+		b.Logger().Error("unable to retrieve Keyfactor certificate ID for cert with serial: "+serial, "error", err)
 		return nil, err
 	}
-	b.Logger().Debug(fmt.Sprintf("retreived the logical storage entry, decoding..."))
-	var keyfactorId int32
-	err = kfId.DecodeJSON(&keyfactorId)
+	if kfId == nil {
+		return logical.ErrorResponse(fmt.Sprintf("no Keyfactor certificate ID is stored for serial %s; it cannot be revoked through this plugin", serial)), nil
+	}
+	b.Logger().Debug("retrieved the logical storage entry, decoding...")
+	keyfactorId, err := decodeStoredKeyfactorID(kfId)
 	if err != nil {
-		b.Logger().Error("Unable to parse stored certificate ID for cert with serial: "+serial, err)
+		b.Logger().Error("Unable to parse stored certificate ID for cert with serial: "+serial, "error", err)
 		return nil, err
 	}
 
@@ -571,14 +682,16 @@ func revokeCert(ctx context.Context, b *keyfactorBackend, req *logical.Request, 
 	_, httpResponse, err := apiReq.Execute()
 
 	if err != nil {
-		b.Logger().Error(fmt.Sprintf("revocation failed: %s \n %s", err, httpResponse.Body))
-		return nil, fmt.Errorf("revocation failed. \n http status: %s \n response body: %s", httpResponse.Status, httpResponse.Body)
+		b.Logger().Error(fmt.Sprintf("revocation failed: %s", err))
+		return nil, fmt.Errorf("revocation failed: %w", err)
+	}
+	if httpResponse == nil {
+		return nil, errors.New("revocation failed: no response received from Command")
 	}
 
 	if httpResponse.StatusCode != 204 && httpResponse.StatusCode != 200 {
-		b.Logger().Info("revocation failed: server returned" + fmt.Sprint(httpResponse.StatusCode))
-		b.Logger().Info("error response = " + fmt.Sprint(httpResponse.Body))
-		return nil, fmt.Errorf("revocation failed: server returned  %s\n %s", httpResponse.Status, httpResponse.Body)
+		b.Logger().Info("revocation failed: server returned " + httpResponse.Status)
+		return nil, fmt.Errorf("revocation failed: server returned %s", httpResponse.Status)
 	}
 
 	alreadyRevoked := false
@@ -650,40 +763,44 @@ func revokeCert(ctx context.Context, b *keyfactorBackend, req *logical.Request, 
 	return resp, nil
 }
 
+// checkAllowedDomains verifies that every requested domain is permitted by the
+// role. A domain is allowed when:
+//   - the role allows any domain ("*" in allowed_domains), or
+//   - it exactly matches one of the role's allowed_domains, or
+//   - the role allows subdomains and the domain is a proper subdomain of an
+//     allowed domain (i.e. ends with "."+allowed, guarding against matches like
+//     "evilexample.com" against "example.com").
 func checkAllowedDomains(role *roleEntry, roleName string, domains []string) (bool, error) {
-	//check role permissions
-	var err_resp error
-	var valid bool
-	var hasSuffix bool
 	var disallowed []string
 
-	// check the allowed domains for a match.
-	// if allowed_domains is '*', allow any domain
-
 	for _, d := range domains {
+		allowed := false
 		for _, v := range role.AllowedDomains {
-			if v == "*" || strings.HasSuffix(d, v) { // if it has the suffix..
-				hasSuffix = true
-				if d == v || role.AllowSubdomains { // and there is an exact match, or subdomains are allowed..
-					valid = true // then it is valid
-				} else {
-					valid = false
-					disallowed = append(disallowed, d)
-				}
+			if v == "*" {
+				allowed = true
+				break
+			}
+			if strings.EqualFold(d, v) { // exact match
+				allowed = true
+				break
+			}
+			if role.AllowSubdomains && strings.HasSuffix(strings.ToLower(d), "."+strings.ToLower(v)) {
+				allowed = true
+				break
 			}
 		}
-	}
-	if !valid {
-		var disallowed_domains = strings.Join(disallowed, ",")
-		var allowed_domains = strings.Join(role.AllowedDomains, ",")
-		err_resp = fmt.Errorf("domain name not allowed for role: %s.  \n allowed domains for %s are: %s", disallowed_domains, roleName, allowed_domains)
-	}
-	if !valid && hasSuffix {
-		err_resp = fmt.Errorf("sub-domains are not allowed for role %s", roleName)
+		if !allowed {
+			disallowed = append(disallowed, d)
+		}
 	}
 
-	if err_resp != nil {
-		return false, err_resp
+	if len(disallowed) > 0 {
+		return false, fmt.Errorf(
+			"domain name(s) not allowed for role %s: %s. allowed domains are: %s",
+			roleName,
+			strings.Join(disallowed, ","),
+			strings.Join(role.AllowedDomains, ","),
+		)
 	}
 
 	return true, nil

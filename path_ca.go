@@ -1,5 +1,5 @@
 /*
- *  Copyright 2024 Keyfactor
+ *  Copyright 2026 Keyfactor
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the License.
  *  You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
  *  Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS,
@@ -61,7 +61,13 @@ func (b *keyfactorBackend) pathFetchCa(ctx context.Context, req *logical.Request
 	caName := data.Get("ca").(string)
 	if caName == "" {
 		b.Logger().Debug("no ca passed, retreiving from config")
-		caName = b.cachedConfig.CertAuthority
+		config, err := b.fetchConfig(ctx, req.Storage)
+		if err != nil {
+			return nil, err
+		}
+		if config != nil {
+			caName = config.CertAuthority
+		}
 	}
 	b.Logger().Debug(fmt.Sprintf("ca name = %s", caName))
 	if caName == "" {
@@ -77,7 +83,13 @@ func (b *keyfactorBackend) pathFetchCaChain(ctx context.Context, req *logical.Re
 	caName := data.Get("ca").(string)
 	if caName == "" {
 		b.Logger().Debug("no ca passed, retreiving from config")
-		caName = b.cachedConfig.CertAuthority
+		config, err := b.fetchConfig(ctx, req.Storage)
+		if err != nil {
+			return nil, err
+		}
+		if config != nil {
+			caName = config.CertAuthority
+		}
 	}
 	b.Logger().Debug(fmt.Sprintf("ca name = %s", caName))
 	if caName == "" {

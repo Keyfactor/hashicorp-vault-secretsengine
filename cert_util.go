@@ -1,5 +1,5 @@
 /*
- *  Copyright 2024 Keyfactor
+ *  Copyright 2026 Keyfactor
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the License.
  *  You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
  *  Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS,
@@ -34,13 +34,19 @@ import (
 )
 
 // Generate keypair and CSR
-func (b *keyfactorBackend) generateCSR(cn string, ip_sans []string, dns_sans []string) (string, []byte) {
-	keyBytes, _ := rsa.GenerateKey(rand.Reader, 2048)
+func (b *keyfactorBackend) generateCSR(cn string, ip_sans []string, dns_sans []string) (string, []byte, error) {
+	keyBytes, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to generate RSA private key: %w", err)
+	}
 	subj := pkix.Name{
 		CommonName: cn,
 	}
 	rawSubj := subj.ToRDNSequence()
-	asn1Subj, _ := asn1.Marshal(rawSubj)
+	asn1Subj, err := asn1.Marshal(rawSubj)
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to marshal the certificate subject: %w", err)
+	}
 	var netIPSans []net.IP
 	for i := range ip_sans {
 		netIPSans = append(netIPSans, net.ParseIP(ip_sans[i]))
@@ -52,10 +58,15 @@ func (b *keyfactorBackend) generateCSR(cn string, ip_sans []string, dns_sans []s
 		IPAddresses:        netIPSans,
 		DNSNames:           dns_sans,
 	}
-	csrBytes, _ := x509.CreateCertificateRequest(rand.Reader, &csrtemplate, keyBytes)
+	csrBytes, err := x509.CreateCertificateRequest(rand.Reader, &csrtemplate, keyBytes)
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to create the certificate request: %w", err)
+	}
 	csrBuf := new(bytes.Buffer)
-	pem.Encode(csrBuf, &pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrBytes})
-	return csrBuf.String(), x509.MarshalPKCS1PrivateKey(keyBytes)
+	if err := pem.Encode(csrBuf, &pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrBytes}); err != nil {
+		return "", nil, fmt.Errorf("failed to PEM-encode the certificate request: %w", err)
+	}
+	return csrBuf.String(), x509.MarshalPKCS1PrivateKey(keyBytes), nil
 }
 
 // Handle interface with Keyfactor API to enroll a certificate with given content
@@ -69,7 +80,7 @@ func (b *keyfactorBackend) submitCSR(ctx context.Context, req *logical.Request, 
 	}
 
 	location, _ := time.LoadLocation("UTC")
-	time := time.Now().In(location)
+	requestTime := time.Now().In(location)
 
 	// get client
 	client, err := b.getClient(ctx, req.Storage)
@@ -93,7 +104,7 @@ func (b *keyfactorBackend) submitCSR(ctx context.Context, req *logical.Request, 
 		CertificateAuthority: *v1.NewNullableString(&caName),
 		IncludeChain:         &inclChain,
 		Metadata:             metadataMap,
-		Timestamp:            &time,
+		Timestamp:            &requestTime,
 		Template:             *v1.NewNullableString(&templateName),
 	}
 
@@ -135,50 +146,56 @@ func (b *keyfactorBackend) submitCSR(ctx context.Context, req *logical.Request, 
 
 	resData, httpRes, err := apiRequest.Execute()
 
-	if err != nil || httpRes.StatusCode != 200 {
-		body, bodyErr := io.ReadAll(httpRes.Body)
+	if err != nil || httpRes == nil || httpRes.StatusCode != 200 {
 		errMsg := ""
+		statusCode := 0
 
-		if bodyErr != nil {
-			b.Logger().Error(fmt.Sprintf("there was an error reading the response body: %v", bodyErr))
-			errMsg = err.Error()
-		} else {
-			errMsg = string(body)
+		switch {
+		case httpRes == nil:
+			// The SDK returned no response (e.g. connection failure); fall
+			// back to the error itself, which is all we have.
+			if err != nil {
+				errMsg = err.Error()
+			} else {
+				errMsg = "no response received from Command"
+			}
+		default:
+			statusCode = httpRes.StatusCode
+			body, bodyErr := io.ReadAll(httpRes.Body)
+			if bodyErr != nil {
+				b.Logger().Error(fmt.Sprintf("there was an error reading the response body: %v", bodyErr))
+				if err != nil {
+					errMsg = err.Error()
+				}
+			} else {
+				errMsg = string(body)
+			}
 		}
-		b.Logger().Error(fmt.Sprintf("there was an error performing CSR enrollment.  HttpStatusCode: %d, error: %s", httpRes.StatusCode, errMsg))
-		return nil, "", fmt.Errorf(errMsg)
+		b.Logger().Error(fmt.Sprintf("there was an error performing CSR enrollment.  HttpStatusCode: %d, error: %s", statusCode, errMsg))
+		return nil, "", fmt.Errorf("CSR enrollment failed (status %d): %s", statusCode, errMsg)
 	}
 
 	// Read certificates from response
 	certs, ok := resData.CertificateInformation.GetCertificatesOk()
 
-	if !ok {
-		b.Logger().Error(fmt.Sprintf("unable to read certificate response : %s", err))
-		return nil, "", err
+	if !ok || len(certs) == 0 {
+		b.Logger().Error("unable to read certificate from the Command enrollment response")
+		return nil, "", errors.New("no certificates were returned in the Command enrollment response")
 	}
 
 	serial := resData.CertificateInformation.SerialNumber
 	kfId := resData.CertificateInformation.KeyfactorID
 
+	if serial.Get() == nil {
+		return nil, "", errors.New("Command enrollment response did not include a serial number")
+	}
+
 	resMap, _ := resData.ToMap()
 	b.Logger().Debug(fmt.Sprintf("full response: %s", resMap))
 
-	// store the ca chain
-
-	caEntry, err := logical.StorageEntryJSON("ca_chain/", certs[1:]) // certs after the first one are the chain
-	if err != nil {
-		b.Logger().Error("error creating ca_chain entry", err)
-	}
-
-	err = req.Storage.Put(ctx, caEntry)
-	if err != nil {
-		b.Logger().Error("error storing the ca_chain locally", err)
-	}
-
 	// store the certificate
 
-	normalizedSerial := *serial.Get()
-	normalizedSerial = strings.ToUpper(normalizedSerial)
+	normalizedSerial := strings.ToUpper(*serial.Get())
 
 	key := "certs/" + normalizedSerial
 
@@ -191,7 +208,7 @@ func (b *keyfactorBackend) submitCSR(ctx context.Context, req *logical.Request, 
 
 	err = req.Storage.Put(ctx, entry)
 	if err != nil {
-		return nil, "", fmt.Errorf("unable to store certificate locally: {{err}}", err)
+		return nil, "", fmt.Errorf("unable to store certificate locally: %w", err)
 	}
 
 	kfIdEntry, err := logical.StorageEntryJSON("kfId/"+normalizedSerial, kfId)
@@ -203,7 +220,17 @@ func (b *keyfactorBackend) submitCSR(ctx context.Context, req *logical.Request, 
 
 	err = req.Storage.Put(ctx, kfIdEntry)
 	if err != nil {
-		return nil, "", fmt.Errorf("unable to store the keyfactor ID for the certificate locally: {{err}}", err)
+		return nil, "", fmt.Errorf("unable to store the keyfactor ID for the certificate locally: %w", err)
+	}
+
+	// store the metadata so it can be surfaced when the certificate is read.
+	// This is supplementary information, so a failure here is logged but does
+	// not fail the enrollment.
+	metadataEntry, err := logical.StorageEntryJSON("metadata/"+normalizedSerial, metadataMap)
+	if err != nil {
+		b.Logger().Error("unable to create certificate metadata entry", "error", err)
+	} else if err = req.Storage.Put(ctx, metadataEntry); err != nil {
+		b.Logger().Error("unable to store certificate metadata locally", "error", err)
 	}
 
 	return certs, normalizedSerial, nil
@@ -272,22 +299,22 @@ func fetchCAInfo(ctx context.Context, req *logical.Request, b *keyfactorBackend,
 	b.Logger().Trace("extracting the CA and Chain from the retreived cert.")
 	ca_chain, ca_cert, err := fetchChainAndCAForCert(ctx, req, b, int(*issued_cert.Id)) // we download the full cert and chain
 	if err != nil {
-		b.Logger().Error("error getting full chain and CA for cert: %s", err)
+		b.Logger().Error("error getting full chain and CA for cert", "error", err)
 		return nil, err
 	}
-	b.Logger().Trace("extracted ca and chain from cert. chain has a length of %d \n", len(ca_chain))
+	b.Logger().Trace(fmt.Sprintf("extracted ca and chain from cert. chain has a length of %d", len(ca_chain)))
 
 	// now we have the full cert + chain, in PEM format
 
 	// store the CA cert locally
 	caStorageEntry, err := logical.StorageEntryJSON("ca/"+caName, ca_cert)
 	if err != nil {
-		b.Logger().Error("error creating ca entry", err)
+		b.Logger().Error("error creating ca entry", "error", err)
 	}
 
 	err = req.Storage.Put(ctx, caStorageEntry)
 	if err != nil {
-		b.Logger().Error("error storing the ca locally", err)
+		b.Logger().Error("error storing the ca locally", "error", err)
 	}
 
 	ca_chain_combined := strings.Join(ca_chain, "") // store as a single PEM chain
@@ -295,12 +322,12 @@ func fetchCAInfo(ctx context.Context, req *logical.Request, b *keyfactorBackend,
 	// store the full chain locally
 	caChainStorageEntry, err := logical.StorageEntryJSON("ca/"+caName+"_chain", ca_chain_combined)
 	if err != nil {
-		b.Logger().Error("error creating ca chain entry", err)
+		b.Logger().Error("error creating ca chain entry", "error", err)
 	}
 
 	err = req.Storage.Put(ctx, caChainStorageEntry)
 	if err != nil {
-		b.Logger().Error("error storing the ca chain locally", err)
+		b.Logger().Error("error storing the ca chain locally", "error", err)
 	}
 
 	if includeChain {
@@ -394,10 +421,9 @@ func fetchCertIssuedByCA(ctx context.Context, req *logical.Request, b *keyfactor
 	// get the client
 	client, err := b.getClient(ctx, req.Storage)
 	if err != nil {
-		b.Logger().Error("unable to create the http client")
+		b.Logger().Error(fmt.Sprintf("unable to create the http client: %s", err))
+		return nil, fmt.Errorf("unable to create the Keyfactor client: %w", err)
 	}
-
-	//caName = strings.Replace(caName, " ", "%20", -1)
 
 	// Send request and check status
 
@@ -405,21 +431,21 @@ func fetchCertIssuedByCA(ctx context.Context, req *logical.Request, b *keyfactor
 
 	certs, httpResponse, err := client.V1.CertificateApi.NewGetCertificatesRequest(ctx).QueryString("CA -eq \"" + caName + "\"").ReturnLimit(1).Execute()
 
-	//certs, httpResponse, err := apiRequest.Execute()
-
 	if err != nil {
 		b.Logger().Error(fmt.Sprintf("failed to retreive cert: %s", err.Error()))
-		b.Logger().Debug(fmt.Sprintf("http status code: %d, http response: %s", httpResponse.StatusCode, httpResponse.Body))
 		return nil, err
 	}
 
-	if httpResponse.StatusCode != 200 {
-		b.Logger().Error("request failed: server returned" + fmt.Sprint(httpResponse.StatusCode))
-		b.Logger().Error("Error response = " + fmt.Sprint(httpResponse.Body))
-		return nil, fmt.Errorf("error downloading certificate. returned status = %d\n %s", httpResponse.StatusCode, httpResponse.Body)
+	if httpResponse == nil {
+		return nil, errors.New("no response received from Command when fetching a cert issued by the CA")
 	}
 
-	b.Logger().Debug(fmt.Sprintf("cert issued by CA response: %s", certs))
+	if httpResponse.StatusCode != 200 {
+		b.Logger().Error("request failed: server returned " + fmt.Sprint(httpResponse.StatusCode) + " " + httpResponse.Status)
+		return nil, fmt.Errorf("error downloading certificate. returned status = %d %s", httpResponse.StatusCode, httpResponse.Status)
+	}
+
+	b.Logger().Debug(fmt.Sprintf("cert issued by CA response: %+v", certs))
 
 	if len(certs) == 0 {
 		return nil, fmt.Errorf("no certificates issued by CA %s found in Command.  At least 1 must exist in order to retreive the CA or CA chain certificate(s)", caName)
@@ -440,7 +466,8 @@ func fetchChainAndCAForCert(ctx context.Context, req *logical.Request, b *keyfac
 	// get the client
 	client, err := b.getClient(ctx, req.Storage)
 	if err != nil {
-		b.Logger().Error("unable to create the http client")
+		b.Logger().Error(fmt.Sprintf("unable to create the http client: %s", err))
+		return nil, "", fmt.Errorf("unable to create the Keyfactor client: %w", err)
 	}
 
 	// Build request
@@ -466,13 +493,15 @@ func fetchChainAndCAForCert(ctx context.Context, req *logical.Request, b *keyfac
 	response, httpResponse, err := apiRequest.Execute()
 
 	if err != nil {
-		b.Logger().Info(fmt.Sprintf("failed getting cert: %s \n %s", err, httpResponse.Body))
-		return nil, "", fmt.Errorf("failed to retreive CA Chain.\n http status code: %d \n %s", httpResponse.StatusCode, httpResponse.Body)
+		b.Logger().Info(fmt.Sprintf("failed getting cert: %s", err))
+		return nil, "", fmt.Errorf("failed to retreive CA Chain: %w", err)
+	}
+	if httpResponse == nil {
+		return nil, "", errors.New("no response received from Command when downloading the certificate chain")
 	}
 	if httpResponse.StatusCode != 200 {
-		b.Logger().Error("request failed: server returned" + fmt.Sprint(httpResponse.StatusCode))
-		b.Logger().Error("Error response = " + fmt.Sprint(httpResponse.Body))
-		return nil, "", fmt.Errorf("error downloading certificate. returned status = %d\n %s", httpResponse.StatusCode, httpResponse.Body)
+		b.Logger().Error("request failed: server returned " + fmt.Sprint(httpResponse.StatusCode) + " " + httpResponse.Status)
+		return nil, "", fmt.Errorf("error downloading certificate. returned status = %d %s", httpResponse.StatusCode, httpResponse.Status)
 	}
 
 	// Read response and convert to x509 certificates
@@ -482,7 +511,10 @@ func fetchChainAndCAForCert(ctx context.Context, req *logical.Request, b *keyfac
 		return nil, "", p7bErr
 	}
 
-	// first cert is leaf, next cert is CA,  remaining certs are chain
+	// first cert is leaf, next cert is CA, remaining certs are chain
+	if len(certs) < 2 {
+		return nil, "", fmt.Errorf("expected at least a leaf and an issuing CA certificate in the downloaded chain, but got %d certificate(s)", len(certs))
+	}
 	ca_chain := certs[1:]
 	ca_cert := certs[1]
 
@@ -532,98 +564,3 @@ func ConvertBase64P7BtoCertificates(base64P7B string) ([]*x509.Certificate, erro
 	// Return the certificates.
 	return p7.Certificates, nil
 }
-
-func ConvertBase64P7BtoPEM(base64P7B string) ([]string, error) {
-	// Decode the base64 string to a byte slice.
-	decodedBytes, err := base64.StdEncoding.DecodeString(base64P7B)
-	if err != nil {
-		return []string{}, fmt.Errorf("error decoding base64 string: %w", err)
-	}
-
-	// Parse the PKCS#7 structure.
-	p7, err := pkcs7.Parse(decodedBytes)
-
-	if err != nil {
-		return []string{}, fmt.Errorf("error parsing PKCS#7 data: %w", err)
-	}
-
-	// Initialize an empty string to append the PEM encoded certificates.
-	var pemEncodedCerts []string
-
-	// Encode each certificate found in the PKCS#7 structure into PEM format.
-	for _, cert := range p7.Certificates {
-		pemBlock := &pem.Block{
-			Type:  "CERTIFICATE",
-			Bytes: cert.Raw,
-		}
-		pemEncoded := pem.EncodeToMemory(pemBlock)
-		pemEncodedCerts = append(pemEncodedCerts, string(pemEncoded))
-	}
-
-	return pemEncodedCerts, nil
-}
-
-// type KeyfactorCertResponse []struct {
-// 	ID                       int              `json:"Id"`
-// 	Thumbprint               string           `json:"Thumbprint"`
-// 	SerialNumber             string           `json:"SerialNumber"`
-// 	IssuedDN                 string           `json:"IssuedDN"`
-// 	IssuedCN                 string           `json:"IssuedCN"`
-// 	ImportDate               time.Time        `json:"ImportDate"`
-// 	NotBefore                time.Time        `json:"NotBefore"`
-// 	NotAfter                 time.Time        `json:"NotAfter"`
-// 	IssuerDN                 string           `json:"IssuerDN"`
-// 	PrincipalID              interface{}      `json:"PrincipalId"`
-// 	TemplateID               interface{}      `json:"TemplateId"`
-// 	CertState                int              `json:"CertState"`
-// 	KeySizeInBits            int              `json:"KeySizeInBits"`
-// 	KeyType                  int              `json:"KeyType"`
-// 	RequesterID              int              `json:"RequesterId"`
-// 	IssuedOU                 interface{}      `json:"IssuedOU"`
-// 	IssuedEmail              interface{}      `json:"IssuedEmail"`
-// 	KeyUsage                 int              `json:"KeyUsage"`
-// 	SigningAlgorithm         string           `json:"SigningAlgorithm"`
-// 	CertStateString          string           `json:"CertStateString"`
-// 	KeyTypeString            string           `json:"KeyTypeString"`
-// 	RevocationEffDate        interface{}      `json:"RevocationEffDate"`
-// 	RevocationReason         interface{}      `json:"RevocationReason"`
-// 	RevocationComment        interface{}      `json:"RevocationComment"`
-// 	CertificateAuthorityID   int              `json:"CertificateAuthorityId"`
-// 	CertificateAuthorityName string           `json:"CertificateAuthorityName"`
-// 	TemplateName             interface{}      `json:"TemplateName"`
-// 	ArchivedKey              bool             `json:"ArchivedKey"`
-// 	HasPrivateKey            bool             `json:"HasPrivateKey"`
-// 	PrincipalName            interface{}      `json:"PrincipalName"`
-// 	CertRequestID            interface{}      `json:"CertRequestId"`
-// 	RequesterName            string           `json:"RequesterName"`
-// 	ContentBytes             string           `json:"ContentBytes"`
-// 	ExtendedKeyUsages        []interface{}    `json:"ExtendedKeyUsages"`
-// 	SubjectAltNameElements   []interface{}    `json:"SubjectAltNameElements"`
-// 	CRLDistributionPoints    []interface{}    `json:"CRLDistributionPoints"`
-// 	LocationsCount           []interface{}    `json:"LocationsCount"`
-// 	SSLLocations             []interface{}    `json:"SSLLocations"`
-// 	Locations                []interface{}    `json:"Locations"`
-// 	Metadata                 Metadata         `json:"Metadata"`
-// 	CertificateKeyID         int              `json:"CertificateKeyId"`
-// 	CARowIndex               int              `json:"CARowIndex"`
-// 	DetailedKeyUsage         DetailedKeyUsage `json:"DetailedKeyUsage"`
-// 	KeyRecoverable           bool             `json:"KeyRecoverable"`
-// }
-// type Metadata struct {
-// }
-// type DetailedKeyUsage struct {
-// 	CrlSign          bool   `json:"CrlSign"`
-// 	DataEncipherment bool   `json:"DataEncipherment"`
-// 	DecipherOnly     bool   `json:"DecipherOnly"`
-// 	DigitalSignature bool   `json:"DigitalSignature"`
-// 	EncipherOnly     bool   `json:"EncipherOnly"`
-// 	KeyAgreement     bool   `json:"KeyAgreement"`
-// 	KeyCertSign      bool   `json:"KeyCertSign"`
-// 	KeyEncipherment  bool   `json:"KeyEncipherment"`
-// 	NonRepudiation   bool   `json:"NonRepudiation"`
-// 	HexCode          string `json:"HexCode"`
-// }
-
-// type KeyfactorCertDownloadResponse struct {
-// 	Content string `json:"Content"`
-// }

@@ -1,5 +1,5 @@
 /*
- *  Copyright 2024 Keyfactor
+ *  Copyright 2026 Keyfactor
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the License.
  *  You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
  *  Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS,
@@ -38,14 +38,19 @@ type keyfactorConfig struct {
 	CertTemplate    string   `json:"template"`
 	CertAuthority   string   `json:"ca"`
 	CommandCertPath string   `json:"command_cert_path"`
+	// Automatic tidy (expired-certificate cleanup) settings.
+	TidyEnabled      bool `json:"tidy_enabled"`
+	TidyInterval     int  `json:"tidy_interval"`      // seconds between automatic sweeps
+	TidySafetyBuffer int  `json:"tidy_safety_buffer"` // seconds to retain a cert past its expiry before deleting
 }
 
 func (b *keyfactorBackend) fetchConfig(ctx context.Context, s logical.Storage) (*keyfactorConfig, error) {
-	if b.cachedConfig != nil {
-		if b.cachedConfig.CommandAPIPath == "" {
-			b.cachedConfig.CommandAPIPath = "KeyfactorAPI"
-		}
-		return b.cachedConfig, nil
+	// Fast path: return the cached config under a read lock.
+	b.configLock.RLock()
+	cached := b.cachedConfig
+	b.configLock.RUnlock()
+	if cached != nil {
+		return cached, nil
 	}
 
 	entry, err := s.Get(ctx, configPath)
@@ -60,7 +65,17 @@ func (b *keyfactorBackend) fetchConfig(ctx context.Context, s logical.Storage) (
 	if err := entry.DecodeJSON(config); err != nil {
 		return nil, err
 	}
+	if config.CommandAPIPath == "" {
+		config.CommandAPIPath = "KeyfactorAPI"
+	}
 
+	// Populate the cache under the write lock, re-checking in case another
+	// goroutine loaded it while we were reading from storage.
+	b.configLock.Lock()
+	defer b.configLock.Unlock()
+	if b.cachedConfig != nil {
+		return b.cachedConfig, nil
+	}
 	b.cachedConfig = config
 
 	return config, nil
@@ -173,6 +188,24 @@ func pathConfig(b *keyfactorBackend) []*framework.Path {
 					Description: "Set this flag to show sensitive values in the output",
 					Required:    false,
 				},
+				"tidy_enabled": {
+					Type:        framework.TypeBool,
+					Description: "If set, the plugin periodically removes locally-stored certificates that have expired. Defaults to false.",
+					Required:    false,
+					Default:     false,
+				},
+				"tidy_interval": {
+					Type:        framework.TypeDurationSecond,
+					Description: "How often the automatic tidy sweep runs when tidy_enabled is true. Defaults to 24h.",
+					Required:    false,
+					Default:     86400,
+				},
+				"tidy_safety_buffer": {
+					Type:        framework.TypeDurationSecond,
+					Description: "How long a certificate is retained past its expiry before the tidy sweep removes it. Defaults to 72h.",
+					Required:    false,
+					Default:     259200,
+				},
 			},
 
 			Callbacks: map[logical.Operation]framework.OperationFunc{
@@ -212,6 +245,11 @@ func (b *keyfactorBackend) pathConfigRead(
 		password = "(hidden)"
 	}
 
+	accessToken := config.AccessToken
+	if accessToken != "" && !showSensitiveData {
+		accessToken = "(hidden)"
+	}
+
 	return &logical.Response{
 		Data: map[string]interface{}{
 			"url":               config.KeyfactorUrl,
@@ -223,12 +261,15 @@ func (b *keyfactorBackend) pathConfigRead(
 			"token_url":         config.TokenUrl,
 			"scopes":            config.Scopes,
 			"audience":          config.Audience,
-			"access_token":      config.AccessToken,
+			"access_token":      accessToken,
 			"ca":                config.CertAuthority,
 			"template":          config.CertTemplate,
-			"command_cert_path": config.CommandCertPath,
-			"skip_verify":       config.SkipTLSVerify,
-			"domain":            config.Domain,
+			"command_cert_path":  config.CommandCertPath,
+			"skip_verify":        config.SkipTLSVerify,
+			"domain":             config.Domain,
+			"tidy_enabled":       config.TidyEnabled,
+			"tidy_interval":      config.TidyInterval,
+			"tidy_safety_buffer": config.TidySafetyBuffer,
 		},
 	}, nil
 }
@@ -240,8 +281,6 @@ func (b *keyfactorBackend) pathConfigUpdate(
 	data *framework.FieldData,
 ) (*logical.Response, error) {
 	b.Logger().Debug("Calling pathConfigUpdate")
-	b.configLock.RLock()
-	defer b.configLock.RUnlock()
 
 	newConfig := &keyfactorConfig{
 		KeyfactorUrl:    data.Get("url").(string),
@@ -256,21 +295,30 @@ func (b *keyfactorBackend) pathConfigUpdate(
 		AccessToken:     data.Get("access_token").(string),
 		Scopes:          data.Get("scopes").([]string),
 		Audience:        data.Get("audience").(string),
-		Domain:          data.Get("domain").(string),
-		CommandCertPath: data.Get("command_cert_path").(string),
-		SkipTLSVerify:   data.Get("skip_verify").(bool),
+		Domain:           data.Get("domain").(string),
+		CommandCertPath:  data.Get("command_cert_path").(string),
+		SkipTLSVerify:    data.Get("skip_verify").(bool),
+		TidyEnabled:      data.Get("tidy_enabled").(bool),
+		TidyInterval:     data.Get("tidy_interval").(int),
+		TidySafetyBuffer: data.Get("tidy_safety_buffer").(int),
 	}
 
 	// Check if the config already exists, to determine if this is a create or
 	// an update, since req.Operation is always 'update' in this handler, and
 	// there's no existence check defined.
-	existingConfig, err := b.fetchConfig(ctx, req.Storage)
+	existing, err := b.fetchConfig(ctx, req.Storage)
 	if err != nil {
 		return nil, err
 	}
 
-	if existingConfig == nil {
-		existingConfig = newConfig
+	// Work on a copy so we never mutate the cached config in place (other
+	// goroutines may be reading it), and so a failed write doesn't corrupt
+	// the in-memory cache.
+	existingConfig := &keyfactorConfig{}
+	if existing != nil {
+		*existingConfig = *existing
+	} else {
+		*existingConfig = *newConfig
 	}
 
 	if username, ok := data.GetOk("username"); ok {
@@ -333,20 +381,35 @@ func (b *keyfactorBackend) pathConfigUpdate(
 		existingConfig.CommandCertPath = caCertPath.(string)
 	}
 
+	if tidyEnabled, ok := data.GetOk("tidy_enabled"); ok {
+		existingConfig.TidyEnabled = tidyEnabled.(bool)
+	}
+
+	if tidyInterval, ok := data.GetOk("tidy_interval"); ok {
+		existingConfig.TidyInterval = tidyInterval.(int)
+	}
+
+	if tidySafetyBuffer, ok := data.GetOk("tidy_safety_buffer"); ok {
+		existingConfig.TidySafetyBuffer = tidySafetyBuffer.(int)
+	}
+
 	entry, err := logical.StorageEntryJSON(configPath, existingConfig)
 	if err != nil {
-		b.Logger().Error("[ERROR] there was an error converting the values to JSON for storage: %s", err)
+		b.Logger().Error("there was an error converting the values to JSON for storage", "error", err)
 		return nil, err
 	}
 
 	if err := req.Storage.Put(ctx, entry); err != nil {
-		b.Logger().Error("[ERROR] there was an error writing the configuration to the backend: %s", err)
+		b.Logger().Error("there was an error writing the configuration to the backend", "error", err)
 		return nil, err
 	}
 
-	// reset the client so the next invocation will pick up the new configuration
+	// reset the client so the next invocation will pick up the new
+	// configuration, then prime the cache with the value we just stored.
 	b.reset()
+	b.configLock.Lock()
 	b.cachedConfig = existingConfig
+	b.configLock.Unlock()
 	return nil, nil
 }
 
@@ -357,6 +420,11 @@ func (b *keyfactorBackend) pathConfigDelete(
 	data *framework.FieldData,
 ) (*logical.Response, error) {
 	err := req.Storage.Delete(ctx, configPath)
+	if err == nil {
+		// Clear the cached config and client so subsequent operations don't
+		// keep using the deleted configuration from memory.
+		b.reset()
+	}
 	return nil, err
 }
 
