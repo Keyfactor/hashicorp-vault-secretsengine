@@ -24,17 +24,21 @@ returned to Hashicorp Vault and stored within the Vault Secrets store to then be
     - [Keyfactor Requirements](#keyfactor-requirements)
     - [Hashicorp Vault Requirements](#hashicorp-vault-requirements)
 - [Installation - Keyfactor](#installation---keyfactor)
-    - [Create the Active Directory service account](#create-the-active-directory-service-account)
+    - [Create the Service Account in Command](#create-the-service-account-in-command)
+    - [Assign the user permissions in Keyfactor Command](#assign-the-user-permissions-in-keyfactor-command)
     - [Create a certificate template](#create-a-certificate-template)
-    - [Publish the template for the Certificate Authority](#publish-the-template-for-the-certificate-authority)
+    - [Allow the template to be used for CSR enrollment](#allow-the-template-to-be-used-for-csr-enrollment-through-keyfactor)
 - [Installation - Vault](#installation---vault)
     - [Check the Vault server status](#check-the-vault-server-status)
     - [Install and register the plugin](#install-and-register-the-plugin)
     - [Configure the plugin](#configure-the-plugin)
+        - [Basic Authentication](#basic-authentication-configuration)
+        - [OpenID Connect / oAuth](#openid-connect--oauth-configuration)
     - [Adding Roles](#adding-roles)
 - [Using the plugin](#using-the-plugin)
     - [Issuing Certificates](#issuing-certificates)
     - [Viewing Certificates](#viewing-certificates)
+    - [Tidying expired certificates](#tidying-expired-certificates)
 - [Command Reference](#plugin-command-reference)
     - [Create/update configuration](#createupdate-configuration)
     - [Read configuration](#read-configuration)
@@ -49,6 +53,8 @@ returned to Hashicorp Vault and stored within the Vault Secrets store to then be
     - [Sign a CSR](#sign-csr)
     - [View CA Certificate](#read-ca-cert)
     - [View CA Certificate Chain](#read-ca-chain)
+    - [Tidy expired certificates](#tidy-expired-certificates)
+    - [Read tidy status](#read-tidy-status)
 
 ## Overview
 
@@ -98,6 +104,24 @@ issued. The Keyfactor Secrets Engine offers the following enterprise capabilitie
 > native Vault policies, the roles implemented by the secrets engine plugin, and the template
 > rules available in Command.
 
+### Per-instance configuration
+
+The Keyfactor plugin implements a **per-instance configuration**. Because Vault mounts every enabled
+secrets engine at its own path, you can register and enable multiple independent instances of this
+plugin at the same time, each with its own configuration, certificate store, roles, and default CA and
+template. Each instance is scoped to a single Keyfactor Command connection and a single service-account
+identity.
+
+This is a deliberate architectural choice rather than an incidental behavior. It lets you dedicate a
+separate plugin instance to each certificate issuance workflow — for example, one instance
+authenticating as a service account restricted to web-server templates, and a second instance scoped to
+a different CA, template, and identity for client-authentication certificates. Because Vault ACL
+policies are applied per mount path, this also allows you to grant different Vault clients access to
+different Command identities and issuance policies without them interfering with one another.
+
+The remainder of this document describes configuring a single instance; repeat the enable and configure
+steps for each additional instance you require, giving each a distinct mount path.
+
 ## Compatibility
 
 This Vault Plugin has been tested against Hashicorp Vault version 1.10+ and the Keyfactor Platform 9.6+. We provide
@@ -133,21 +157,28 @@ document.
 
 ### Create the Service Account in Command
 
-This plugin can authenticate via username/password, TLS certificate authentication, and oAuth/openIDConnect.  
+This plugin authenticates to the Keyfactor Command API using one of two methods:
+
+- **Basic** — an Active Directory username, password, and domain.
+- **OAuth / OpenID Connect** — a client ID, client secret, and token endpoint (or a pre-obtained access token).
 
 For the purposes of this document, we will not go into the details of how to create each type of service entity.
-Refer to the Keyfactor platform documentation for guidance on creating these service accounts. 
+Refer to the Keyfactor platform documentation for guidance on creating these service accounts.
 
-The configuration of the plugin will differ slightly for each different approach.  Here is a table with the values 
+The configuration of the plugin will differ slightly for each approach. Here is a table with the values
 needed for authentication for each approach:
 
-| basic | oAuth | TLS |
-| ----------------- | ----- | --- |
-| Username          | Client ID | Certificate Path |
-| Password          | Client Secret | |
-| AD Domain         | Token Endpoint | |
+| Basic | oAuth |
+| ----- | ----- |
+| Username (`username`) | Client ID (`client_id`) |
+| Password (`password`) | Client Secret (`client_secret`) |
+| AD Domain (`domain`) | Token Endpoint (`token_url`) |
 
-These values will be discussed in greater detail in the [Configure the plugin](#configure-the-plugin) section of this document.
+These values are discussed in greater detail in the [Configure the plugin](#configure-the-plugin) section of this document.
+
+> [!NOTE]
+> `command_cert_path` and `skip_verify` control how the plugin *trusts Command's server TLS certificate*;
+> they are not authentication credentials. See [Configure the plugin](#configure-the-plugin).
 
 ### Assign the user permissions in Keyfactor Command
 
@@ -342,6 +373,12 @@ you may or may not be able to access certain paths.
         Request certificates using a certain role with the provided details.
         example: vault write keyfactor/sign/<role> csr=<csr>
 
+    ^tidy$
+        Tidy up the locally-stored certificate store by removing expired certificates.
+
+    ^tidy/status$
+        Return the status of the most recent tidy operation.
+
 ```
 
 If you see this, you have successfully installed the plugin.  Now we can configure it for connecting with Command for certificate enrollment.
@@ -351,9 +388,9 @@ If you see this, you have successfully installed the plugin.  Now we can configu
 Once the plugin has been successfully installed, the next step is to set the configuration values that will allow it to
 interact with the Keyfactor platform.
 
-The Keyfactor plugin implements a per-instance configuration which allows multiple instances of the plugin to exist
-simultaneously. This could be useful for creating multiple instances of the plugin; each scoped to a specific Command service account identity that 
-is specific to a particular issuance workflow.
+The Keyfactor plugin uses a per-instance configuration (see
+[Per-instance configuration](#per-instance-configuration) in the Overview). The settings described below
+apply to the single plugin instance you are configuring; repeat these steps for each additional instance.
 
 To set a configuration value:
 
@@ -375,8 +412,11 @@ Here is a table of the available configuration paramaters
 | **access_token** | string | no   | | oAuth access token, if retrieved outside the context of the plugin |
 | **scopes** | []string (comma separated list) | no | | the defined scopes to apply to the retreived token in the oAuth authorization flow.  If not provided, all available scopes for the service account will be assigned to the token upon authentication |
 | **audience** | string | no | | the OpenID Connect v1.0 or oAuth v2.0 token audience |
-| **skip_verify** | bool | no | _false_ | set this to true to skip checking the CRL list of the HTTPS endpoint |
-| **command_cert_path** | string | no | | set this value to the local path of the CA cert if it is untrusted by the client and skip_verify is false
+| **skip_verify** | bool | no | _false_ | set this to true to skip verification of the Command **server's** TLS certificate. Intended for test environments only; leave false in production |
+| **command_cert_path** | string | no | | the local path to a PEM-encoded CA certificate used to **trust the Command server's TLS certificate**, when it is not already trusted by the host and skip_verify is false. This establishes server trust only; it is not a client authentication credential |
+| **tidy_enabled** | bool | no | _false_ | when true, the plugin periodically removes locally-stored certificates that have expired. See [Tidying expired certificates](#tidying-expired-certificates) |
+| **tidy_interval** | duration | no | _24h_ | how often the automatic tidy sweep runs when tidy_enabled is true |
+| **tidy_safety_buffer** | duration | no | _72h_ | how long an expired certificate is retained past its expiry before the tidy sweep removes it |
 
 [^1]: The **ca** and **template** fields can be provided via command line parameters.  If they are not provided, the plugin will default to what is set in the configuration values.  If neither are available an error will occur.
 
@@ -467,11 +507,16 @@ the Vault secrets store.
 After certificates are stored in the secrets store, you can then retrieve those certificates at a later time if
 necessary. To list the certificates that exist within the Vault store, use the LIST option with vault. The only
 parameter that you need to include is the secrets store name for the store that you would like to read. The system will
-then return a list of all of the serial numbers for certificates that are present in that secrets store.
+then return the serial numbers of the certificates present in that secrets store.
 
 `vault list keyfactor/certs`
 
-The results of the command will be a list of serial numbers for the certificates in that store location:
+To also see the common name of each certificate, add the `-detailed` flag (the common name is returned as
+additional key information that the standard `vault list` output does not display):
+
+`vault list -detailed keyfactor/certs`
+
+The plain command returns a list of serial numbers for the certificates in that store location:
 
 ```
 Keys
@@ -490,7 +535,10 @@ example:
 
 `vault read keyfactor/cert/750000276546d818cbe70231b6000000002765`
 
-The response will show the value for that certificate.
+The response includes the certificate's serial number, common name, the PEM-encoded certificate content, the
+expiration date, and the revocation time (`0` if the certificate has not been revoked). If metadata was submitted
+when the certificate was issued, it is also included; the metadata field is omitted when none was provided. For
+example:
 
 ```
 Key                Value
@@ -541,6 +589,38 @@ LS1FTkQgQ0VSVElGSUNBVEUtLS0tLQ0K
 -----END CERTIFICATE-----
 revocation_time    0
 ```
+
+### Tidying expired certificates
+
+Unless a role is configured with `no_store=true`, the plugin keeps a copy of every issued certificate in its
+Vault storage (along with the certificate's Keyfactor ID and any revocation record). Over time, expired
+certificates accumulate and consume storage. The `tidy` operation reclaims that space by removing certificates
+whose expiration date (`NotAfter`), plus a safety buffer, has passed. The associated Keyfactor ID and revocation
+records are removed along with each certificate.
+
+To run a tidy sweep on demand:
+
+`vault write keyfactor/tidy safety_buffer=72h`
+
+The sweep runs in the background so it does not block the request. To view its progress and the results of the
+most recent run:
+
+`vault read keyfactor/tidy/status`
+
+The status includes whether a sweep is currently running, when it last ran, and how many certificates were
+examined, deleted, and skipped.
+
+You can also enable automatic, scheduled tidying through the configuration:
+
+`vault write keyfactor/config tidy_enabled=true tidy_interval=24h tidy_safety_buffer=72h`
+
+When enabled, the plugin runs the sweep automatically on the configured interval (on the active node of the
+primary cluster). Automatic tidy is **disabled by default**, so no certificates are ever removed until you either
+run `keyfactor/tidy` manually or set `tidy_enabled=true`.
+
+> [!NOTE]
+> Certificates that cannot be parsed are skipped and never deleted. Certificates issued using a role with
+> `no_store=true` are not stored in the first place, so they are unaffected by tidy.
 
 ## Plugin command reference
 
@@ -596,7 +676,19 @@ instance of the plugin is named "keyfactor".
 ### Read CA cert
 
 `vault read keyfactor/ca ca=<ca name>`
+> Note: The certificate for the CA needs to have been imported into Command for this endpoint to return the CA Certificate
 
 ### Read CA chain
 
 `vault read keyfactor/ca_chain ca=<ca name>`
+> Note: _All_ certificates in the chain need to have been imported into Command for this endpoint to return the CA Certificate Chain
+
+### Tidy expired certificates
+
+`vault write keyfactor/tidy safety_buffer=<duration>`
+> Note: `safety_buffer` is optional and defaults to 72h. The sweep runs in the background.
+
+### Read tidy status
+
+`vault read keyfactor/tidy/status`
+
