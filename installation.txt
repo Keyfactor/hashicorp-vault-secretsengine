@@ -23,8 +23,7 @@ sha256 checksum: <checksum>
 
 	> vault secrets enable <instance name>
 
-6) test the connection by requesting the ca
-
+6) test the connection by requesting the CA (the CA certificate will need to exist in the Command database)
 	> vault read <instance name>/ca
 
 
