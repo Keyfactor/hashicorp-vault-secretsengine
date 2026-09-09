@@ -32,8 +32,8 @@ github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03
 github.com/DataDog/datadog-go v3.2.0+incompatible/go.mod h1:LButxg5PwREeZtORoXG3tL4fMGNddJ+vMq1mwgfaqoQ=
 github.com/Keyfactor/keyfactor-auth-client-go v1.2.0 h1:uNSlyOW5Bqpi0nsOGZtOYQzN0vP/h4S4J38jtQes+OI=
 github.com/Keyfactor/keyfactor-auth-client-go v1.2.0/go.mod h1:7htRcBIWn+X4fI5jaYBALSYwP84H/djN7d8y3n0ZDQ0=
-github.com/Keyfactor/keyfactor-go-client-sdk/v24 v24.0.0 h1:b7jYhcw4ENQC/VdFiikquI9lkUBt5C84TM9VnH3jzFI=
-github.com/Keyfactor/keyfactor-go-client-sdk/v24 v24.0.0/go.mod h1:xIbpgJ9eYfcYeSM0VzP5Q3ifgLCf3yGKKyZtWmqqOi8=
+github.com/Keyfactor/keyfactor-go-client-sdk/v24 v24.1.1 h1:snWSopug5HD/GH7EByOYUs/dBU+b4mLpgBpDbHVdGJU=
+github.com/Keyfactor/keyfactor-go-client-sdk/v24 v24.1.1/go.mod h1:xIbpgJ9eYfcYeSM0VzP5Q3ifgLCf3yGKKyZtWmqqOi8=
 github.com/Masterminds/semver/v3 v3.1.1/go.mod h1:VPu/7SZ7ePZ3QOrcuXROw5FAcLl4a0cBrbBpGY/8hQs=
 github.com/Masterminds/semver/v3 v3.3.1 h1:QtNSWtVZ3nBfk8mAOu/B6v7FMJ+NHTIgUPi7rj+4nv4=
 github.com/Masterminds/semver/v3 v3.3.1/go.mod h1:4V+yj/TJE1HU9XfppCwVMZq3I84lprf4nC11bSS5beM=
