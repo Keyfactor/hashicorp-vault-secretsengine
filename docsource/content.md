@@ -1,9 +1,4 @@
-# Hashicorp Vault Secrets Engine
-
-Keyfactor enables DevOps teams to get seamless access to trusted internal and public certificates via native Vault API
-calls and commands, while security teams maintain complete visibility and control over backend PKI operations.
-
-## About the Hashicorp Vault Secrets Engine plugin by Keyfactor
+# Overview
 
 The Keyfactor Secrets Engine provides a PKI backend for Vault to issue trusted certificates via the Keyfactor platform.
 It enables developers to use native Vault API calls and
