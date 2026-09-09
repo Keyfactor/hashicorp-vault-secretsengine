@@ -1,4 +1,4 @@
-- Unreleased
+- 1.5.1
   - Updated the Keyfactor Go Client SDK to v24.1.1 to fix an OAuth regression (introduced in SDK v24.0.0, used by plugin 1.4.2 and 1.5.0) where the SDK rebuilt its internal OAuth client without the configured `scopes`, `audience`, and `access_token`, causing client-credentials token requests to Entra ID to fail with `AADSTS90014` and external-access-token configurations to require a client ID.
 
 - 1.5.0
