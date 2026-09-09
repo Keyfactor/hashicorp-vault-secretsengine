@@ -1,33 +1,37 @@
+<h1 align="center" style="border-bottom: none">
+    Keyfactor Hashicorp Vault Secrets Engine
+</h1>
 
-# keyfactor-vault-secrets-engine
+<p align="center">
+  <!-- Badges -->
+<img src="https://img.shields.io/badge/integration_status-production-3D1973?style=flat-square" alt="Integration Status: production" />
+<a href="https://github.com/Keyfactor/hashicorp-vault-secretsengine/releases"><img src="https://img.shields.io/github/v/release/Keyfactor/hashicorp-vault-secretsengine?style=flat-square" alt="Release" /></a>
+<img src="https://img.shields.io/github/issues/Keyfactor/hashicorp-vault-secretsengine?style=flat-square" alt="Issues" />
+<img src="https://img.shields.io/github/downloads/Keyfactor/hashicorp-vault-secretsengine/total?style=flat-square&label=downloads&color=28B905" alt="GitHub Downloads (all assets, all releases)" />
+</p>
 
-A Vault plugin that allows Vault to use Keyfactor Command as a CA and issue certificates.
+<p align="center">
+  <!-- TOC -->
+  <a href="#support">
+    <b>Support</b>
+  </a> 
+  ·
+  <a href="#license">
+    <b>License</b>
+  </a>
+  ·
+  <a href="https://github.com/topics/keyfactor-integration">
+    <b>Related Integrations</b>
+  </a>
+</p>
 
-#### Integration status: Production - Ready for use in production environments.
+## Support
+The Keyfactor Hashicorp Vault Secrets Engine is open source and community supported, meaning that there is **no SLA** applicable. 
 
-## About the Keyfactor API Client
-
-This API client allows for programmatic management of Keyfactor resources.
-
-## Support for keyfactor-vault-secrets-engine
-
-keyfactor-vault-secrets-engine is open source and community supported, meaning that there is no support guaranteed from Keyfactor Support for these tools.
-
-###### To report a problem or suggest a new feature, use the **[Issues](../../issues)** tab. If you want to contribute actual bug fixes or proposed enhancements, use the **[Pull requests](../../pulls)** tab.
-
----
+> To report a problem or suggest a new feature, use the **[Issues](../../issues)** tab. If you want to contribute actual bug fixes or proposed enhancements, use the **[Pull requests](../../pulls)** tab.
 
 
----
-
-
-
-# Hashicorp Vault Secrets Engine
-
-Keyfactor enables DevOps teams to get seamless access to trusted internal and public certificates via native Vault API
-calls and commands, while security teams maintain complete visibility and control over backend PKI operations.
-
-## About the Hashicorp Vault Secrets Engine plugin by Keyfactor
+# Overview
 
 The Keyfactor Secrets Engine provides a PKI backend for Vault to issue trusted certificates via the Keyfactor platform.
 It enables developers to use native Vault API calls and
@@ -273,14 +277,18 @@ There are 2 key values to look for in these results:
    entered individually (and potentially by different people or processes)
 
 ```
+
 # vault operator unseal 3TGWPmQDdqkRsV9VamEYJ0tolsaEEo3u4kuwy2o6u6Om
+
 # vault operator unseal Ja4AGQ4N8193/5O7hJPpRcncmqBpnH1mdjqcQSqDVq6v
+
 # vault operator unseal cuE1X01NrNgeAU6ao5aNUFsjWAPhOgEPkgaW5Vl19XDg
 ```
 
 or they can be all issued within a single command as illustrated below:
 
 ```
+
 # vault operator unseal 3TGWPmQDdqkRsV9VamEYJ0tolsaEEo3u4kuwy2o6u6Om && vault operator unseal
 Ja4AGQ4N8193/5O7hJPpRcncmqBpnH1mdjqcQSqDVq6v && vault operator unseal
 cuE1X01NrNgeAU6ao5aNUFsjWAPhOgEPkgaW5Vl19XDg
@@ -484,7 +492,6 @@ in order to view the configuration settings (see example below).
 
 > [!NOTE]
 > By default the sensitive values (password, client_secret) are hidden.  To show these, pass the "show_hidden=true" parameter to the request; `vault read <instance name>/config show_hidden=true`
-
 
 ### Adding Roles
 
@@ -715,3 +722,13 @@ instance of the plugin is named "keyfactor".
 ### Read tidy status
 
 `vault read keyfactor/tidy/status`
+
+
+
+## License
+
+Apache License 2.0, see [LICENSE](LICENSE).
+
+## Related Integrations
+
+See all [Keyfactor integrations](https://github.com/topics/keyfactor-integration).
