@@ -723,6 +723,7 @@ instance of the plugin is named "keyfactor".
 
 `vault read keyfactor/tidy/status`
 
+### Tidy expired certificates
 
 
 ## License
