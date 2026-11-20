@@ -13,6 +13,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
+	"strings"
 	"testing"
 	"time"
 
@@ -51,6 +52,42 @@ func TestCheckAllowedDomains(t *testing.T) {
 				t.Errorf("expected error for disallowed case, got nil")
 			}
 		})
+	}
+}
+
+// TestCheckAllowedDomains_SubdomainHint guards the error text for a request
+// refused only because allow_subdomains is false. The message must name the
+// setting: otherwise it lists an allowed domain that the requested name plainly
+// sits under and gives no reason for the refusal. 1.4.1 reported this case
+// separately and 1.5.0 dropped it.
+func TestCheckAllowedDomains_SubdomainHint(t *testing.T) {
+	role := &roleEntry{AllowedDomains: []string{"example.com"}, AllowSubdomains: false}
+
+	_, err := checkAllowedDomains(role, "testrole", []string{"a.example.com"})
+	if err == nil {
+		t.Fatal("expected an error for a subdomain with allow_subdomains=false")
+	}
+	if !strings.Contains(err.Error(), "allow_subdomains") {
+		t.Errorf("error should name allow_subdomains, got: %v", err)
+	}
+
+	// A name that is not a subdomain of any allowed domain must not get the hint.
+	_, err = checkAllowedDomains(role, "testrole", []string{"other.net"})
+	if err == nil {
+		t.Fatal("expected an error for an unrelated domain")
+	}
+	if strings.Contains(err.Error(), "allow_subdomains") {
+		t.Errorf("an unrelated domain should not mention allow_subdomains, got: %v", err)
+	}
+
+	// Nor should a suffix-bypass attempt, which is refused on its own merits.
+	subRole := &roleEntry{AllowedDomains: []string{"example.com"}, AllowSubdomains: true}
+	_, err = checkAllowedDomains(subRole, "testrole", []string{"evilexample.com"})
+	if err == nil {
+		t.Fatal("expected an error for a suffix-bypass attempt")
+	}
+	if strings.Contains(err.Error(), "allow_subdomains") {
+		t.Errorf("suffix bypass should not mention allow_subdomains, got: %v", err)
 	}
 }
 

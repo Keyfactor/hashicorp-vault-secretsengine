@@ -1,3 +1,8 @@
+- 1.5.2
+  - Fixed an upgrade issue where certificates issued by plugin version 1.4.1 or earlier could not be revoked through the plugin. Those releases stored the Keyfactor certificate ID under a lowercased serial number, and 1.5.0 changed serial normalization to uppercase; because Vault storage keys are case-sensitive, the existing entries became unreachable and revocation failed with "no Keyfactor certificate ID is stored for serial ...". The ID is now located at either path and migrated forward on first access. Locally stored certificates and revocation records were already recovered this way and are unaffected.
+  - Role validation errors now name `allow_subdomains` when a request is refused only because the role does not permit subdomains, restoring a distinction that was lost in 1.5.0.
+  - Corrected the plugin version reported to Vault, which remained `1.5.0` in the 1.5.1 release.
+
 - 1.5.1
   - Updated the Keyfactor Go Client SDK to v24.1.1 to fix an OAuth regression (introduced in SDK v24.0.0, used by plugin 1.4.2 and 1.5.0) where the SDK rebuilt its internal OAuth client without the configured `scopes`, `audience`, and `access_token`, causing client-credentials token requests to Entra ID to fail with `AADSTS90014` and external-access-token configurations to require a client ID.
 

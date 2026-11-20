@@ -624,6 +624,60 @@ func decodeStoredKeyfactorID(entry *logical.StorageEntry) (int32, error) {
 	return id, nil
 }
 
+// legacyKeyfactorIDPath returns the pre-1.5.0 storage path for a certificate's
+// Keyfactor ID. Releases through 1.4.1 keyed these entries with normalizeSerial(),
+// which lowercased the serial; 1.5.0 changed normalizeSerial() to uppercase it.
+// Vault storage keys are case-sensitive, so an ID written by an older release is
+// invisible to the current lookup.
+func legacyKeyfactorIDPath(serial string) string {
+	return "kfId/" + strings.Replace(strings.ToLower(serial), ":", "-", -1)
+}
+
+// fetchKeyfactorID loads the stored Keyfactor certificate ID for a serial.
+//
+// Certificates issued before 1.5.0 have their ID stored under the legacy path
+// above. Those entries are migrated to the current path on first access rather
+// than merely read through: the tidy sweep derives the keys it deletes from the
+// uppercase "certs/" listing, so an entry left behind at the legacy path would
+// never be reclaimed. The "certs/" and "revoked/" entries already recover from
+// the same rename in fetchCertBySerial; "metadata/" needs no equivalent, as no
+// release before 1.5.0 wrote it.
+func fetchKeyfactorID(ctx context.Context, req *logical.Request, serial string) (*logical.StorageEntry, error) {
+	path := "kfId/" + serial
+
+	entry, err := req.Storage.Get(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("error fetching the Keyfactor ID for serial %s: %w", serial, err)
+	}
+	if entry != nil {
+		return entry, nil
+	}
+
+	legacyPath := legacyKeyfactorIDPath(serial)
+	if legacyPath == path {
+		return nil, nil
+	}
+
+	// A miss here is the normal case for anything issued by 1.5.0 or later, so
+	// the error is disregarded rather than masking the clearer "no Keyfactor ID
+	// is stored" response the caller returns for a genuine absence. This mirrors
+	// how fetchCertBySerial treats its own legacy path.
+	entry, _ = req.Storage.Get(ctx, legacyPath)
+	if entry == nil || len(entry.Value) == 0 {
+		return nil, nil
+	}
+
+	entry.Key = path
+	if err := req.Storage.Put(ctx, entry); err != nil {
+		return nil, fmt.Errorf("error saving the Keyfactor ID for serial %s to its new location: %w", serial, err)
+	}
+	if err := req.Storage.Delete(ctx, legacyPath); err != nil {
+		return nil, fmt.Errorf("error deleting the Keyfactor ID for serial %s from its old location: %w", serial, err)
+	}
+
+	return entry, nil
+}
+
 // Revokes a cert, and tries to be smart about error recovery
 func revokeCert(ctx context.Context, b *keyfactorBackend, req *logical.Request, serial string, fromLease bool) (*logical.Response, error) {
 	if b.System().Tainted() {
@@ -640,7 +694,7 @@ func revokeCert(ctx context.Context, b *keyfactorBackend, req *logical.Request, 
 
 	b.Logger().Debug(fmt.Sprintf("retreiving the keyfactor ID for cert stored at path: %s", "kfId/"+serial))
 
-	kfId, err := req.Storage.Get(ctx, "kfId/"+serial) //retrieve the keyfactor certificate ID, keyed by sn here
+	kfId, err := fetchKeyfactorID(ctx, req, serial) //retrieve the keyfactor certificate ID, keyed by sn here
 	if err != nil {
 		b.Logger().Error("unable to retrieve Keyfactor certificate ID for cert with serial: "+serial, "error", err)
 		return nil, err
@@ -772,6 +826,7 @@ func revokeCert(ctx context.Context, b *keyfactorBackend, req *logical.Request, 
 //     "evilexample.com" against "example.com").
 func checkAllowedDomains(role *roleEntry, roleName string, domains []string) (bool, error) {
 	var disallowed []string
+	var subdomainBlocked []string
 
 	for _, d := range domains {
 		allowed := false
@@ -791,19 +846,51 @@ func checkAllowedDomains(role *roleEntry, roleName string, domains []string) (bo
 		}
 		if !allowed {
 			disallowed = append(disallowed, d)
+			if isBlockedSubdomain(role, d) {
+				subdomainBlocked = append(subdomainBlocked, d)
+			}
 		}
 	}
 
 	if len(disallowed) > 0 {
-		return false, fmt.Errorf(
+		msg := fmt.Sprintf(
 			"domain name(s) not allowed for role %s: %s. allowed domains are: %s",
 			roleName,
 			strings.Join(disallowed, ","),
 			strings.Join(role.AllowedDomains, ","),
 		)
+		// Name allow_subdomains explicitly when that is the only thing standing
+		// in the way. Without this the message lists an allowed domain that the
+		// requested name plainly sits under and gives no reason for the refusal.
+		// 1.4.1 reported this case separately; 1.5.0 dropped the distinction.
+		if len(subdomainBlocked) > 0 {
+			msg += fmt.Sprintf(
+				". sub-domains are not allowed for role %s; set allow_subdomains=true to permit %s",
+				roleName,
+				strings.Join(subdomainBlocked, ","),
+			)
+		}
+		return false, errors.New(msg)
 	}
 
 	return true, nil
+}
+
+// isBlockedSubdomain reports whether d was refused only because the role does
+// not permit subdomains, i.e. it is a proper subdomain of an allowed domain.
+func isBlockedSubdomain(role *roleEntry, d string) bool {
+	if role.AllowSubdomains {
+		return false
+	}
+	for _, v := range role.AllowedDomains {
+		if v == "*" {
+			continue
+		}
+		if strings.HasSuffix(strings.ToLower(d), "."+strings.ToLower(v)) {
+			return true
+		}
+	}
+	return false
 }
 
 const pathIssueHelpSyn = `
