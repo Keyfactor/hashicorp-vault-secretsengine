@@ -123,6 +123,76 @@ func TestDecodeStoredKeyfactorID(t *testing.T) {
 	}
 }
 
+// TestFetchKeyfactorID_MigratesLegacyLowercasePath guards the upgrade path from
+// 1.4.1 and earlier, which stored Keyfactor certificate IDs under a lowercased
+// serial. Vault storage keys are case-sensitive, so without the legacy fallback
+// every certificate issued before 1.5.0 became unrevokable through the plugin.
+// The stored ID here begins with '4' so the migrated entry also exercises the
+// LZ4 compression-canary decode fix.
+func TestFetchKeyfactorID_MigratesLegacyLowercasePath(t *testing.T) {
+	_, storage := getTestBackend(t)
+	ctx := context.Background()
+
+	const serial = "AB12CD34"
+	const legacyKey = "kfId/ab12cd34"
+
+	legacyEntry, err := logical.StorageEntryJSON(legacyKey, int32(4567))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.Put(ctx, legacyEntry); err != nil {
+		t.Fatal(err)
+	}
+
+	entry, err := fetchKeyfactorID(ctx, &logical.Request{Storage: storage}, serial)
+	if err != nil {
+		t.Fatalf("fetchKeyfactorID err: %v", err)
+	}
+	if entry == nil {
+		t.Fatal("expected the legacy entry to be found, got nil")
+	}
+	id, err := decodeStoredKeyfactorID(entry)
+	if err != nil {
+		t.Fatalf("decode err: %v", err)
+	}
+	if id != 4567 {
+		t.Errorf("id = %d, want 4567", id)
+	}
+
+	// The entry must be migrated forward, not just read through, or the tidy
+	// sweep will never reclaim it.
+	moved, err := storage.Get(ctx, "kfId/"+serial)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if moved == nil {
+		t.Error("expected the ID to be rewritten to the uppercase path")
+	}
+	old, err := storage.Get(ctx, legacyKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if old != nil {
+		t.Error("expected the legacy entry to be deleted after migration")
+	}
+}
+
+// TestFetchKeyfactorID_MissingReturnsNil confirms a serial with no stored ID at
+// either path reports absence rather than an error, so the caller can return its
+// "cannot be revoked through this plugin" response.
+func TestFetchKeyfactorID_MissingReturnsNil(t *testing.T) {
+	_, storage := getTestBackend(t)
+	ctx := context.Background()
+
+	entry, err := fetchKeyfactorID(ctx, &logical.Request{Storage: storage}, "NOSUCHSERIAL")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if entry != nil {
+		t.Errorf("expected a nil entry, got %v", entry)
+	}
+}
+
 func TestFetchCertList_IncludesCommonName(t *testing.T) {
 	b, storage := getTestBackend(t)
 	ctx := context.Background()

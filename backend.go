@@ -24,7 +24,7 @@ import (
 
 const (
 	operationPrefixKeyfactor string = "keyfactor"
-	PluginVersion                   = "1.5.0" // this should match the release version of the plugin
+	PluginVersion                   = "1.5.2" // this should match the release version of the plugin
 )
 
 // Factory configures and returns backend
